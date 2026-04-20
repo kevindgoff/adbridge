@@ -1,6 +1,10 @@
-from fastapi import FastAPI
+import os
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 from app.database import init_db
 from app.config import get_enabled_apis
+
+_API_KEY = os.environ.get("API_KEY")
 
 tags_metadata = [
     {"name": "/basis", "description": "Basis Technologies API mock endpoints"},
@@ -37,6 +41,13 @@ if _enabled.get("triton"):
 if _enabled.get("hivestack"):
     from app.routes.hivestack import router as hivestack_router
     app.include_router(hivestack_router, tags=["/hivestack"])
+
+
+@app.middleware("http")
+async def require_api_key(request: Request, call_next):
+    if _API_KEY and request.headers.get("X-API-Key") != _API_KEY:
+        return JSONResponse({"detail": "Unauthorized"}, status_code=401)
+    return await call_next(request)
 
 
 @app.on_event("startup")
