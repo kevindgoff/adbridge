@@ -2,5 +2,5 @@ apis:
   basis: true
   dv360: true
   triton: true
-  freewheel: false
+  freewheel: true
   hivestack: true
