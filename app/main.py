@@ -17,8 +17,8 @@ async def _verify_api_key(key: str = Security(_api_key_header)):
         raise HTTPException(status_code=401, detail="Unauthorized")
 
 
-# Only enforce the dependency when an API_KEY is configured
-_global_deps = [Depends(_verify_api_key)] if _API_KEY else []
+# Always show the Authorize button in Swagger; only enforce when API_KEY is set
+_global_deps = [Depends(_verify_api_key)]
 
 tags_metadata = [
     {"name": "/basis", "description": "Basis Technologies API mock endpoints"},
