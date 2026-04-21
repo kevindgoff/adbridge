@@ -1,0 +1,19 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: adbridge
+      POSTGRES_USER: adbridge
+      POSTGRES_PASSWORD: adbridge
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  api:
+    depends_on:
+      - db
+
+volumes:
+  pgdata:

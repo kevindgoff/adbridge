@@ -34,11 +34,24 @@ cp .env.example .env
 
 ### 2. Run with Docker Compose
 
+Two modes are available — pick one.
+
+**Local Postgres** (spins up a Postgres container, no cloud credentials needed):
+
 ```bash
-docker compose up --build
+cp .env.local.example .env
+docker compose -f docker-compose.yml -f docker-compose.local.yml up --build
 ```
 
-This starts the PostgreSQL-compatible database proxy and the API service on **http://localhost:8000**.
+**Cloud SQL** (connects via the GCP Cloud SQL Auth Proxy — requires the service account JSON):
+
+```bash
+cp .env.cloudsql.example .env
+# fill in POSTGRES_PASSWORD in .env
+docker compose -f docker-compose.yml -f docker-compose.cloudsql.yml up --build
+```
+
+Both start the API on **http://localhost:8000**.
 
 ### 3. Run Locally (without Docker)
 

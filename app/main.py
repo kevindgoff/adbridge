@@ -1,10 +1,24 @@
 import os
-from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from dotenv import load_dotenv
+from fastapi import Depends, FastAPI, HTTPException, Security
+from fastapi.security import APIKeyHeader
 from app.database import init_db
 from app.config import get_enabled_apis
 
+load_dotenv()
+
 _API_KEY = os.environ.get("API_KEY")
+
+_api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
+
+
+async def _verify_api_key(key: str = Security(_api_key_header)):
+    if _API_KEY and key != _API_KEY:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+
+# Only enforce the dependency when an API_KEY is configured
+_global_deps = [Depends(_verify_api_key)] if _API_KEY else []
 
 tags_metadata = [
     {"name": "/basis", "description": "Basis Technologies API mock endpoints"},
@@ -19,7 +33,8 @@ app = FastAPI(
     description="Mock API layer for local integration testing against Basis, DV360, Triton Metrics, Triton Booking, and Hivestack DOOH platform APIs.",
     version="0.5.0",
     openapi_tags=tags_metadata,
-    swagger_ui_parameters={"docExpansion": "none"},
+    swagger_ui_parameters={"docExpansion": "none", "persistAuthorization": True},
+    dependencies=_global_deps,
 )
 
 _enabled = get_enabled_apis()
@@ -41,13 +56,6 @@ if _enabled.get("triton"):
 if _enabled.get("hivestack"):
     from app.routes.hivestack import router as hivestack_router
     app.include_router(hivestack_router, tags=["/hivestack"])
-
-
-@app.middleware("http")
-async def require_api_key(request: Request, call_next):
-    if _API_KEY and request.headers.get("X-API-Key") != _API_KEY:
-        return JSONResponse({"detail": "Unauthorized"}, status_code=401)
-    return await call_next(request)
 
 
 @app.on_event("startup")
