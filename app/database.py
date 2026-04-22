@@ -999,11 +999,24 @@ def init_db():
     # Check if already seeded
     cur.execute("SELECT COUNT(*) FROM users")
     count = cur.fetchone()["count"]
-    if count > 0:
-        cur.close()
-        conn.close()
-        return
+    if count == 0:
+        _seed_core(cur)
 
+    now = _now()
+    _seed_dv360(cur, now)
+    _seed_triton_booking(cur, now)
+    _seed_triton(cur, now)
+    _seed_hivestack(cur, now)
+    _seed_adswizz(cur, now)
+
+    conn.commit()
+    cur.close()
+    conn.close()
+    print("Database initialized and seeded.")
+
+
+def _seed_core(cur):
+    """Seed shared tables: users, agencies, clients, brands, campaigns, etc."""
     now = _now()
 
     # --- Users ---
@@ -1257,19 +1270,11 @@ def init_db():
                 ),
             )
 
-    _seed_dv360(cur, now)
-    _seed_triton_booking(cur, now)
-    _seed_triton(cur, now)
-    _seed_hivestack(cur, now)
-    _seed_adswizz(cur, now)
-
-    conn.commit()
-    cur.close()
-    conn.close()
-    print("Database initialized and seeded.")
-
 
 def _seed_dv360(cur, now):
+    cur.execute("SELECT COUNT(*) FROM dv360_partners")
+    if cur.fetchone()["count"] > 0:
+        return
     partner_ids = [100001, 100002]
     for i, pid in enumerate(partner_ids):
         cur.execute(
@@ -1533,6 +1538,9 @@ def _seed_dv360(cur, now):
 
 
 def _seed_triton_booking(cur, now):
+    cur.execute("SELECT COUNT(*) FROM tap_advertisers")
+    if cur.fetchone()["count"] > 0:
+        return
     tap_advertisers = [
         ("iHeartMedia", "iheart.com", "Music & Audio", "USD", "IHM-001", "active",
          "Horizon Agency", "HA-100", None, None, "direct"),
@@ -1654,6 +1662,9 @@ def _seed_triton_booking(cur, now):
 
 
 def _seed_triton(cur, now):
+    cur.execute("SELECT COUNT(*) FROM triton_reports")
+    if cur.fetchone()["count"] > 0:
+        return
     stations = [
         ("WABC-FM", "New York", "US"),
         ("KLOS-FM", "Los Angeles", "US"),
@@ -1702,6 +1713,9 @@ def _seed_triton(cur, now):
 
 def _seed_hivestack(cur, now):
     """Seed Hivestack DOOH mock data: publishers, screens, and deals."""
+    cur.execute("SELECT COUNT(*) FROM hs_publishers")
+    if cur.fetchone()["count"] > 0:
+        return
 
     publishers = [
         ("hs-pub-001", "Outfront Media", "outfront.com", "PUBLISHER"),
@@ -1986,6 +2000,9 @@ def _seed_hivestack(cur, now):
 
 def _seed_adswizz(cur, now):
     """Seed AdsWizz Domain API v8 mock data."""
+    cur.execute("SELECT COUNT(*) FROM aw_agencies")
+    if cur.fetchone()["count"] > 0:
+        return
 
     # --- Agencies ---
     agency_ids = []
