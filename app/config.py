@@ -22,4 +22,5 @@ def get_enabled_apis() -> dict:
         "triton": apis.get("triton", True),
         "freewheel": apis.get("freewheel", True),
         "hivestack": apis.get("hivestack", True),
+        "adswizz": apis.get("adswizz", True),
     }

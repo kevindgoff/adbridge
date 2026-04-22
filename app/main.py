@@ -26,12 +26,13 @@ tags_metadata = [
     {"name": "/triton", "description": "Triton Digital Metrics API mock endpoints"},
     {"name": "/triton-booking", "description": "Triton Digital Booking (TAP) API mock endpoints"},
     {"name": "/hivestack", "description": "Hivestack OpenRTB 2.5 DOOH API mock endpoints"},
+    {"name": "/adswizz", "description": "AdsWizz Domain API v8 mock endpoints"},
 ]
 
 app = FastAPI(
     title="AdBridge - Local Ad Platform API Mock",
-    description="Mock API layer for local integration testing against Basis, DV360, Triton Metrics, Triton Booking, and Hivestack DOOH platform APIs.",
-    version="0.5.0",
+    description="Mock API layer for local integration testing against Basis, DV360, Triton Metrics, Triton Booking, Hivestack DOOH, and AdsWizz platform APIs.",
+    version="0.6.0",
     openapi_tags=tags_metadata,
     swagger_ui_parameters={"docExpansion": "none", "persistAuthorization": True},
     dependencies=_global_deps,
@@ -57,10 +58,23 @@ if _enabled.get("hivestack"):
     from app.routes.hivestack import router as hivestack_router
     app.include_router(hivestack_router, tags=["/hivestack"])
 
+if _enabled.get("adswizz"):
+    from app.routes.adswizz import router as adswizz_router
+    app.include_router(adswizz_router, tags=["/adswizz"])
+
 
 @app.on_event("startup")
 def startup():
-    init_db()
+    import time
+    for attempt in range(10):
+        try:
+            init_db()
+            return
+        except Exception as e:
+            if attempt < 9:
+                time.sleep(2)
+            else:
+                raise
 
 
 @app.get("/health")

@@ -839,6 +839,145 @@ CREATE TABLE IF NOT EXISTS hs_event_data (
     updated_at TEXT NOT NULL,
     UNIQUE (event_id, entity_type, entity_id)
 );
+
+-- ==================== AdsWizz Domain API v8 Tables ====================
+
+CREATE TABLE IF NOT EXISTS aw_agencies (
+    id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL,
+    contact TEXT,
+    email TEXT,
+    external_reference TEXT,
+    currency TEXT DEFAULT 'USD',
+    timezone TEXT DEFAULT 'UTC',
+    margin REAL DEFAULT 0,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS aw_advertisers (
+    id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL,
+    domain TEXT,
+    contact TEXT,
+    email TEXT,
+    comments TEXT,
+    external_reference TEXT,
+    status TEXT NOT NULL DEFAULT 'ACTIVE',
+    ad_clashing BOOLEAN DEFAULT FALSE,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS aw_orders (
+    id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL,
+    advertiser_id INTEGER NOT NULL REFERENCES aw_advertisers(id),
+    start_date TEXT,
+    end_date TEXT,
+    objective_type TEXT DEFAULT 'IMPRESSIONS',
+    objective_value INTEGER,
+    objective_currency TEXT DEFAULT 'USD',
+    objective_unlimited BOOLEAN DEFAULT FALSE,
+    comments TEXT,
+    external_reference TEXT,
+    deal_id TEXT,
+    archived BOOLEAN DEFAULT FALSE,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS aw_campaigns (
+    id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL,
+    campaign_type TEXT NOT NULL DEFAULT 'STANDARD',
+    advertiser_id INTEGER NOT NULL REFERENCES aw_advertisers(id),
+    order_id INTEGER REFERENCES aw_orders(id),
+    status TEXT NOT NULL DEFAULT 'DRAFT',
+    billing TEXT DEFAULT 'UNSOLD',
+    start_date TEXT,
+    end_date TEXT,
+    revenue_type TEXT DEFAULT 'CPM',
+    revenue_value REAL,
+    revenue_currency TEXT DEFAULT 'USD',
+    objective_type TEXT DEFAULT 'IMPRESSIONS',
+    objective_value INTEGER,
+    objective_unlimited BOOLEAN DEFAULT FALSE,
+    pacing_type TEXT DEFAULT 'EVENLY',
+    pacing_priority INTEGER DEFAULT 5,
+    comments TEXT,
+    external_reference TEXT,
+    archived BOOLEAN DEFAULT FALSE,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS aw_ads (
+    id SERIAL PRIMARY KEY,
+    campaign_id INTEGER NOT NULL REFERENCES aw_campaigns(id),
+    name TEXT NOT NULL,
+    type TEXT NOT NULL DEFAULT 'AUDIO',
+    subtype TEXT DEFAULT 'AUDIO',
+    status TEXT NOT NULL DEFAULT 'ACTIVE',
+    included_in_objective BOOLEAN DEFAULT TRUE,
+    weight INTEGER DEFAULT 1,
+    comments TEXT,
+    external_reference TEXT,
+    tracking_type TEXT,
+    tracking TEXT,
+    ad_unit_id INTEGER DEFAULT 0,
+    creative_file_name TEXT,
+    duration_ms INTEGER,
+    destination_url TEXT,
+    archived BOOLEAN DEFAULT FALSE,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS aw_publishers (
+    id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL,
+    contact TEXT,
+    website TEXT,
+    email TEXT,
+    description TEXT,
+    timezone TEXT DEFAULT 'UTC',
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS aw_zones (
+    id SERIAL PRIMARY KEY,
+    publisher_id INTEGER NOT NULL REFERENCES aw_publishers(id),
+    name TEXT NOT NULL,
+    description TEXT,
+    type TEXT NOT NULL DEFAULT 'AUDIO',
+    format_id TEXT,
+    width INTEGER,
+    height INTEGER,
+    duration_min REAL,
+    duration_max REAL,
+    comments TEXT,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS aw_zone_groups (
+    id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL,
+    description TEXT,
+    total_capping INTEGER,
+    session_capping INTEGER,
+    comments TEXT,
+    archived BOOLEAN DEFAULT FALSE,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS aw_zone_group_zones (
+    zone_group_id INTEGER NOT NULL REFERENCES aw_zone_groups(id),
+    zone_id INTEGER NOT NULL REFERENCES aw_zones(id),
+    PRIMARY KEY (zone_group_id, zone_id)
+);
+
+CREATE TABLE IF NOT EXISTS aw_categories (
+    id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL,
+    description TEXT,
+    parent_id INTEGER REFERENCES aw_categories(id)
+);
 """
 
 
@@ -1122,6 +1261,7 @@ def init_db():
     _seed_triton_booking(cur, now)
     _seed_triton(cur, now)
     _seed_hivestack(cur, now)
+    _seed_adswizz(cur, now)
 
     conn.commit()
     cur.close()
@@ -1842,3 +1982,164 @@ def _seed_hivestack(cur, now):
                     (str(uuid.uuid4()), lid, cid, now))
         cur.execute("INSERT INTO hs_lineitem_units (lineitem_id, unit_id) VALUES (%s,%s) ON CONFLICT DO NOTHING",
                     (lid, unit_ids[i % len(unit_ids)]))
+
+
+def _seed_adswizz(cur, now):
+    """Seed AdsWizz Domain API v8 mock data."""
+
+    # --- Agencies ---
+    agency_ids = []
+    for aname, contact, email in [
+        ("SoundWave Media", "Alice Park", "alice@soundwave.com"),
+        ("AudioReach Group", "Tom Rivera", "tom@audioreach.com"),
+    ]:
+        cur.execute(
+            "INSERT INTO aw_agencies (name, contact, email, currency, timezone, margin, created_at) "
+            "VALUES (%s,%s,%s,'USD','America/New_York',15,%s) RETURNING id",
+            (aname, contact, email, now))
+        agency_ids.append(cur.fetchone()["id"])
+
+    # --- Advertisers ---
+    adv_data = [
+        ("PodcastPro Inc", "www.podcastpro.com", "Jane Lee", "jane@podcastpro.com"),
+        ("StreamAudio Co", "www.streamaudio.com", "Mark Chen", "mark@streamaudio.com"),
+        ("VoiceAds Ltd", "www.voiceads.com", "Sara Kim", "sara@voiceads.com"),
+        ("SonicBrand Media", "www.sonicbrand.com", "Leo Diaz", "leo@sonicbrand.com"),
+    ]
+    adv_ids = []
+    for name, domain, contact, email in adv_data:
+        cur.execute(
+            "INSERT INTO aw_advertisers (name, domain, contact, email, status, ad_clashing, created_at) "
+            "VALUES (%s,%s,%s,%s,'ACTIVE',false,%s) RETURNING id",
+            (name, domain, contact, email, now))
+        adv_ids.append(cur.fetchone()["id"])
+
+    # --- Orders ---
+    order_ids = []
+    for i, oname in enumerate(["Q1 Audio Push", "Podcast Sponsorship", "Summer Streaming"]):
+        cur.execute(
+            "INSERT INTO aw_orders (name, advertiser_id, start_date, end_date, "
+            "objective_type, objective_value, objective_currency, objective_unlimited, "
+            "comments, archived, created_at) "
+            "VALUES (%s,%s,%s,%s,'IMPRESSIONS',%s,'USD',false,%s,false,%s) RETURNING id",
+            (oname, adv_ids[i % len(adv_ids)],
+             "2025-01-01T00:00:00Z", "2025-06-30T23:59:59Z",
+             500000 * (i + 1), f"Mock order {i+1}", now))
+        order_ids.append(cur.fetchone()["id"])
+
+    # --- Campaigns ---
+    campaign_types = ["STANDARD", "FILLER", "STANDARD", "SPONSORSHIP", "STANDARD", "INTERACTIVE"]
+    statuses = ["RUNNING", "PAUSED", "READY", "COMPLETED", "DRAFT", "RUNNING"]
+    pacing_types = ["EVENLY", "ASAP", "EVENLY", "EVENLY", "ASAP", "EVENLY"]
+    camp_ids = []
+    for i in range(6):
+        cur.execute(
+            "INSERT INTO aw_campaigns "
+            "(name, campaign_type, advertiser_id, order_id, status, billing, "
+            "start_date, end_date, revenue_type, revenue_value, revenue_currency, "
+            "objective_type, objective_value, objective_unlimited, "
+            "pacing_type, pacing_priority, comments, external_reference, archived, created_at) "
+            "VALUES (%s,%s,%s,%s,%s,'SOLD',%s,%s,'CPM',%s,'USD','IMPRESSIONS',%s,false,%s,%s,%s,%s,false,%s) "
+            "RETURNING id",
+            (f"Campaign {i+1} - Audio {'Spring' if i < 3 else 'Summer'}",
+             campaign_types[i], adv_ids[i % len(adv_ids)],
+             order_ids[i % len(order_ids)] if i < 3 else None,
+             statuses[i],
+             "2025-02-01T00:00:00Z", "2025-08-31T23:59:59Z",
+             round(random.uniform(2.0, 12.0), 2),
+             random.randint(50000, 500000),
+             pacing_types[i], random.randint(1, 8),
+             f"Mock campaign {i+1}", f"EXT-AW-{1000+i}", now))
+        camp_ids.append(cur.fetchone()["id"])
+
+    # --- Ads ---
+    ad_types = ["AUDIO", "AUDIO", "DISPLAY", "AUDIO", "DISPLAY", "AUDIO"]
+    for i, cid in enumerate(camp_ids):
+        for j in range(random.randint(2, 4)):
+            atype = ad_types[(i + j) % len(ad_types)]
+            cur.execute(
+                "INSERT INTO aw_ads "
+                "(campaign_id, name, type, subtype, status, included_in_objective, "
+                "weight, comments, creative_file_name, duration_ms, archived, created_at) "
+                "VALUES (%s,%s,%s,%s,%s,true,%s,%s,%s,%s,false,%s)",
+                (cid, f"Ad {j+1} - {atype.title()}", atype, atype,
+                 random.choice(["ACTIVE", "INACTIVE"]),
+                 random.randint(1, 10),
+                 f"Mock ad for campaign {cid}",
+                 f"creative_{cid}_{j+1}.{'mp3' if atype == 'AUDIO' else 'png'}",
+                 random.choice([15000, 30000, 60000]) if atype == "AUDIO" else None,
+                 now))
+
+    # --- Publishers ---
+    pub_ids = []
+    for pname, website, email in [
+        ("AudioStream FM", "https://audiostream.fm", "ops@audiostream.fm"),
+        ("PodNet Radio", "https://podnetradio.com", "tech@podnetradio.com"),
+        ("WaveLength Media", "https://wavelength.media", "admin@wavelength.media"),
+    ]:
+        cur.execute(
+            "INSERT INTO aw_publishers (name, contact, website, email, description, timezone, created_at) "
+            "VALUES (%s,'Publisher Ops',%s,%s,'Mock publisher',%s,%s) RETURNING id",
+            (pname, website, email, "America/New_York", now))
+        pub_ids.append(cur.fetchone()["id"])
+
+    # --- Zones ---
+    zone_ids = []
+    zone_types = ["AUDIO", "AUDIO", "DISPLAY", "VIDEO", "AUDIO"]
+    formats = ["Pre-roll", "Mid-roll", "Companion", "Pre-roll", "Post-roll"]
+    for i, pid in enumerate(pub_ids):
+        for j in range(3):
+            idx = (i * 3 + j) % len(zone_types)
+            ztype = zone_types[idx]
+            cur.execute(
+                "INSERT INTO aw_zones "
+                "(publisher_id, name, description, type, format_id, "
+                "width, height, duration_min, duration_max, comments, created_at) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id",
+                (pid, f"Zone {j+1} - {ztype.title()}", f"Mock {ztype.lower()} zone",
+                 ztype, formats[idx],
+                 300 if ztype == "DISPLAY" else None,
+                 250 if ztype == "DISPLAY" else None,
+                 15.0 if ztype == "AUDIO" else None,
+                 60.0 if ztype == "AUDIO" else None,
+                 f"Zone for publisher {pid}", now))
+            zone_ids.append(cur.fetchone()["id"])
+
+    # --- Zone Groups ---
+    zg_ids = []
+    for zgname in ["Rock Stations", "News & Talk", "Podcast Network", "Premium Audio"]:
+        cur.execute(
+            "INSERT INTO aw_zone_groups "
+            "(name, description, total_capping, session_capping, comments, archived, created_at) "
+            "VALUES (%s,%s,%s,%s,%s,false,%s) RETURNING id",
+            (zgname, f"Mock zone group: {zgname}",
+             random.randint(500, 2000), random.randint(5, 20),
+             f"Auto-generated group", now))
+        zg_ids.append(cur.fetchone()["id"])
+
+    # Link zones to zone groups
+    for i, zgid in enumerate(zg_ids):
+        for zid in zone_ids[i::len(zg_ids)]:
+            cur.execute(
+                "INSERT INTO aw_zone_group_zones (zone_group_id, zone_id) "
+                "VALUES (%s,%s) ON CONFLICT DO NOTHING",
+                (zgid, zid))
+
+    # --- Categories (IAB-style) ---
+    parent_cats = [
+        ("Arts & Entertainment", "IAB1"),
+        ("Automotive", "IAB2"),
+        ("Business", "IAB3"),
+        ("Technology & Computing", "IAB19"),
+        ("Sports", "IAB17"),
+    ]
+    for pname, desc in parent_cats:
+        cur.execute(
+            "INSERT INTO aw_categories (name, description, parent_id) VALUES (%s,%s,NULL) RETURNING id",
+            (pname, desc))
+        pid = cur.fetchone()["id"]
+        # Add 2 subcategories per parent
+        for sub in [f"{pname} - Sub A", f"{pname} - Sub B"]:
+            cur.execute(
+                "INSERT INTO aw_categories (name, description, parent_id) VALUES (%s,%s,%s)",
+                (sub, f"Subcategory of {pname}", pid))
