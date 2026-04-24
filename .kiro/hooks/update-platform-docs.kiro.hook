@@ -1,0 +1,16 @@
+{
+  "enabled": true,
+  "name": "Update Docs on New Platform",
+  "description": "When a new route file is created in app/routes/, prompts the agent to update all documentation files (README.md, API Mocking and Local Data Emulation.md, and .kiro/steering/ files) to include the new platform — its route prefix, display name, and the original API URL being mirrored.",
+  "version": "1",
+  "when": {
+    "type": "fileCreated",
+    "patterns": [
+      "app/routes/*.py"
+    ]
+  },
+  "then": {
+    "type": "askAgent",
+    "prompt": "A new platform route file was just created in app/routes/. Update the following documentation files to include the new platform:\n\n1. **README.md** — Add a row to the \"Supported Platforms\" table with the route prefix and platform name. Also add the new route file to the \"Project Structure\" tree.\n\n2. **API Mocking and Local Data Emulation.md** — If relevant, mention the new platform in the prompt examples or platform list.\n\n3. **.kiro/steering/product.md** — Add a row to the \"Supported platforms\" table with the prefix and platform name.\n\n4. **.kiro/steering/structure.md** — Add the new route file to the \"Directory layout\" tree and mention it in the \"One route file per platform\" section if needed.\n\nFor each documentation update, include the original API URL that the new platform is mirroring (look for it in the route file's module docstring, comments, or the API reference URL used to build it). If the URL isn't found in the file, leave a placeholder like `<ORIGINAL_API_URL>` so the developer can fill it in.\n\nDo NOT modify any code files — only update documentation and steering files."
+  }
+}
