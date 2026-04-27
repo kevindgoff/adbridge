@@ -978,6 +978,88 @@ CREATE TABLE IF NOT EXISTS aw_categories (
     description TEXT,
     parent_id INTEGER REFERENCES aw_categories(id)
 );
+
+-- ==================== The Trade Desk (TTD) v3 Tables ====================
+
+CREATE TABLE IF NOT EXISTS ttd_advertisers (
+    advertiser_id TEXT PRIMARY KEY,
+    partner_id TEXT NOT NULL,
+    advertiser_name TEXT NOT NULL,
+    description TEXT,
+    currency_code TEXT DEFAULT 'USD',
+    domain_url TEXT,
+    category_id TEXT,
+    industry_id TEXT,
+    status TEXT NOT NULL DEFAULT 'Available',
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS ttd_campaigns (
+    campaign_id TEXT PRIMARY KEY,
+    advertiser_id TEXT NOT NULL REFERENCES ttd_advertisers(advertiser_id),
+    campaign_name TEXT NOT NULL,
+    budget_amount REAL DEFAULT 0,
+    daily_budget REAL DEFAULT 0,
+    start_date TEXT,
+    end_date TEXT,
+    campaign_goal_type TEXT DEFAULT 'CPC',
+    campaign_goal_value REAL DEFAULT 1.0,
+    pacing_mode TEXT DEFAULT 'PaceEvenly',
+    frequency_cap INTEGER,
+    frequency_period TEXT,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS ttd_campaign_flights (
+    flight_id TEXT PRIMARY KEY,
+    campaign_id TEXT NOT NULL REFERENCES ttd_campaigns(campaign_id),
+    flight_name TEXT NOT NULL,
+    start_date TEXT,
+    end_date TEXT,
+    budget_in_impressions INTEGER,
+    daily_target_in_impressions INTEGER,
+    budget_in_advertiser_currency REAL,
+    daily_target_in_advertiser_currency REAL,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS ttd_ad_groups (
+    ad_group_id TEXT PRIMARY KEY,
+    campaign_id TEXT NOT NULL REFERENCES ttd_campaigns(campaign_id),
+    ad_group_name TEXT NOT NULL,
+    bid_amount REAL DEFAULT 5.0,
+    bid_type TEXT DEFAULT 'CPM',
+    is_enabled BOOLEAN DEFAULT TRUE,
+    ad_format TEXT DEFAULT 'Display',
+    start_date TEXT,
+    end_date TEXT,
+    frequency_cap INTEGER,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS ttd_creatives (
+    creative_id TEXT PRIMARY KEY,
+    advertiser_id TEXT NOT NULL REFERENCES ttd_advertisers(advertiser_id),
+    creative_name TEXT NOT NULL,
+    creative_type TEXT DEFAULT 'Banner',
+    width INTEGER DEFAULT 300,
+    height INTEGER DEFAULT 250,
+    click_url TEXT,
+    landing_page_url TEXT,
+    ad_server_id TEXT,
+    approval_status TEXT DEFAULT 'Pending',
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS ttd_tracking_tags (
+    tracking_tag_id TEXT PRIMARY KEY,
+    advertiser_id TEXT NOT NULL REFERENCES ttd_advertisers(advertiser_id),
+    tag_name TEXT NOT NULL,
+    tag_type TEXT DEFAULT 'Script',
+    number_of_fires INTEGER DEFAULT 0,
+    server_side BOOLEAN DEFAULT FALSE,
+    created_at TEXT NOT NULL
+);
 """
 
 
@@ -1008,6 +1090,7 @@ def init_db():
     _seed_triton(cur, now)
     _seed_hivestack(cur, now)
     _seed_adswizz(cur, now)
+    _seed_thetradedesk(cur, now)
 
     conn.commit()
     cur.close()
@@ -2160,3 +2243,124 @@ def _seed_adswizz(cur, now):
             cur.execute(
                 "INSERT INTO aw_categories (name, description, parent_id) VALUES (%s,%s,%s)",
                 (sub, f"Subcategory of {pname}", pid))
+
+
+def _seed_thetradedesk(cur, now):
+    """Seed The Trade Desk v3 mock data."""
+    cur.execute("SELECT COUNT(*) FROM ttd_advertisers")
+    if cur.fetchone()["count"] > 0:
+        return
+
+    partner_ids = ["ttd-p-001", "ttd-p-002"]
+
+    # --- Advertisers ---
+    adv_data = [
+        ("ttd-adv-001", partner_ids[0], "Acme Programmatic", "Acme programmatic buying", "acme.com"),
+        ("ttd-adv-002", partner_ids[0], "TechNova DSP", "TechNova display campaigns", "technova.com"),
+        ("ttd-adv-003", partner_ids[1], "GreenLeaf Digital", "GreenLeaf CTV and audio", "greenleaf.com"),
+        ("ttd-adv-004", partner_ids[1], "Sunset Travel Ads", "Sunset travel promotions", "sunsettravel.com"),
+    ]
+    adv_ids = []
+    for adv_id, pid, name, desc, domain in adv_data:
+        adv_ids.append(adv_id)
+        cur.execute(
+            "INSERT INTO ttd_advertisers VALUES (%s,%s,%s,%s,'USD',%s,NULL,NULL,'Available',%s)",
+            (adv_id, pid, name, desc, domain, now))
+
+    # --- Campaigns ---
+    goal_types = ["CPC", "CPM", "CPA", "ROAS", "MaximizeReach"]
+    pacing_modes = ["PaceEvenly", "PaceAhead", "AsSoonAsPossible"]
+    camp_ids = []
+    camp_counter = 1
+    for adv_id in adv_ids:
+        for j in range(3):
+            cid = f"ttd-c-{camp_counter:04d}"
+            camp_counter += 1
+            camp_ids.append((cid, adv_id))
+            cur.execute(
+                "INSERT INTO ttd_campaigns VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                (cid, adv_id,
+                 f"TTD Campaign {j+1} - {'Brand' if j == 0 else 'Performance' if j == 1 else 'Retargeting'}",
+                 round(random.uniform(10000, 500000), 2),
+                 round(random.uniform(500, 10000), 2),
+                 _past_date(60 - j * 15), _future_date(30 + j * 15),
+                 random.choice(goal_types),
+                 round(random.uniform(0.5, 25.0), 2),
+                 random.choice(pacing_modes),
+                 random.choice([3, 5, 10, None]),
+                 random.choice(["Day", "Week", "Lifetime", None]),
+                 now))
+
+    # --- Campaign Flights ---
+    flight_counter = 1
+    for cid, adv_id in camp_ids:
+        for k in range(2):
+            fid = f"ttd-fl-{flight_counter:04d}"
+            flight_counter += 1
+            budget_imp = random.randint(100000, 5000000)
+            budget_currency = round(random.uniform(5000, 100000), 2)
+            cur.execute(
+                "INSERT INTO ttd_campaign_flights VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                (fid, cid,
+                 f"Flight {k+1} - {'Always On' if k == 0 else 'Burst'}",
+                 _past_date(45 - k * 15), _future_date(30 + k * 15),
+                 budget_imp, budget_imp // 30,
+                 budget_currency, round(budget_currency / 30, 2),
+                 now))
+
+    # --- Ad Groups ---
+    ad_formats = ["Display", "Video", "Audio", "NativeDisplay", "ConnectedTV"]
+    bid_types = ["CPM", "VCPM", "CPV", "CPC"]
+    ag_counter = 1
+    for cid, adv_id in camp_ids:
+        for j in range(random.randint(2, 4)):
+            agid = f"ttd-ag-{ag_counter:04d}"
+            ag_counter += 1
+            cur.execute(
+                "INSERT INTO ttd_ad_groups VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                (agid, cid,
+                 f"Ad Group {j+1} - {random.choice(['Prospecting', 'Retargeting', 'Lookalike', 'Contextual'])}",
+                 round(random.uniform(1.0, 20.0), 2),
+                 random.choice(bid_types),
+                 True,
+                 random.choice(ad_formats),
+                 _past_date(30), _future_date(30),
+                 random.choice([3, 5, 10, None]),
+                 now))
+
+    # --- Creatives ---
+    creative_types = ["Banner", "Video", "NativeDisplay", "Audio", "HTML5"]
+    sizes = [(300, 250), (728, 90), (160, 600), (320, 50), (1920, 1080), (640, 480)]
+    cr_counter = 1
+    for adv_id in adv_ids:
+        for j in range(5):
+            crid = f"ttd-cr-{cr_counter:04d}"
+            cr_counter += 1
+            ctype = random.choice(creative_types)
+            w, h = random.choice(sizes)
+            cur.execute(
+                "INSERT INTO ttd_creatives VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                (crid, adv_id,
+                 f"Creative {j+1} - {ctype}",
+                 ctype, w, h,
+                 f"https://click.example.com/{crid}",
+                 f"https://landing.example.com/{adv_id}",
+                 None,
+                 random.choice(["Active", "Pending", "Rejected"]),
+                 now))
+
+    # --- Tracking Tags ---
+    tag_types = ["Script", "Image", "Iframe"]
+    tt_counter = 1
+    for adv_id in adv_ids:
+        for j in range(3):
+            ttid = f"ttd-tt-{tt_counter:04d}"
+            tt_counter += 1
+            cur.execute(
+                "INSERT INTO ttd_tracking_tags VALUES (%s,%s,%s,%s,%s,%s,%s)",
+                (ttid, adv_id,
+                 f"Tracking Tag {j+1} - {'Conversion' if j == 0 else 'Retargeting' if j == 1 else 'Attribution'}",
+                 random.choice(tag_types),
+                 random.randint(0, 50000),
+                 random.choice([True, False]),
+                 now))
