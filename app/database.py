@@ -3,29 +3,12 @@ import os
 import random
 from datetime import datetime, timedelta
 
-import psycopg2
-import psycopg2.extras
 from dotenv import load_dotenv
 
 load_dotenv()
 
-
-def _dsn():
-    return (
-        f"host={os.environ['POSTGRES_HOST']} "
-        f"port={os.environ.get('POSTGRES_PORT', 5432)} "
-        f"dbname={os.environ['POSTGRES_DB']} "
-        f"user={os.environ['POSTGRES_USER']} "
-        f"password={os.environ['POSTGRES_PASSWORD']}"
-    )
-
-
-def get_db():
-    conn = psycopg2.connect(_dsn(), cursor_factory=psycopg2.extras.RealDictCursor)
-    try:
-        yield conn
-    finally:
-        conn.close()
+# ─── Delegate get_db / init_db to the backend abstraction ───────────────────
+from app.db_backend import get_db, init_db  # noqa: F401 — re-exported for all importers
 
 
 def _uuid():
@@ -1065,37 +1048,6 @@ CREATE TABLE IF NOT EXISTS ttd_tracking_tags (
 
 def _exec(cur, sql, params=()):
     cur.execute(sql, params)
-
-
-def init_db():
-    conn = psycopg2.connect(_dsn(), cursor_factory=psycopg2.extras.RealDictCursor)
-    cur = conn.cursor()
-
-    # Create tables one by one
-    for statement in SCHEMA.split(";"):
-        stmt = statement.strip()
-        if stmt:
-            cur.execute(stmt)
-    conn.commit()
-
-    # Check if already seeded
-    cur.execute("SELECT COUNT(*) FROM users")
-    count = cur.fetchone()["count"]
-    if count == 0:
-        _seed_core(cur)
-
-    now = _now()
-    _seed_dv360(cur, now)
-    _seed_triton_booking(cur, now)
-    _seed_triton(cur, now)
-    _seed_hivestack(cur, now)
-    _seed_adswizz(cur, now)
-    _seed_thetradedesk(cur, now)
-
-    conn.commit()
-    cur.close()
-    conn.close()
-    print("Database initialized and seeded.")
 
 
 def _seed_core(cur):

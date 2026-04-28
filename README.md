@@ -1,6 +1,6 @@
 # AdBridge – Local Ad Platform API Mock
 
-A mock API layer for local integration testing against ad-platform APIs. Built with **FastAPI** and backed by **PostgreSQL**, it seeds realistic synthetic data on first startup so you can develop and test without needing live credentials.
+A mock API layer for local integration testing against ad-platform APIs. Built with **FastAPI** and backed by **PostgreSQL** or **SQLite**, it seeds realistic synthetic data on first startup so you can develop and test without needing live credentials.
 
 ## Supported Platforms
 
@@ -163,9 +163,12 @@ Add `-v` to also delete the database volume (next startup will re-seed).
 pip install -r requirements.txt
 ```
 
+### Option A: PostgreSQL backend (default)
+
 Make sure a Postgres instance is running and update `.env` to point at it:
 
 ```
+DB_BACKEND=postgres
 POSTGRES_HOST=localhost
 POSTGRES_PORT=5432
 POSTGRES_DB=adbridge
@@ -178,6 +181,33 @@ Then start the server:
 ```bash
 uvicorn app.main:app --reload
 ```
+
+### Option B: SQLite backend (zero dependencies)
+
+No database server needed — data is stored in a local file:
+
+```
+DB_BACKEND=sqlite
+SQLITE_PATH=adbridge.db
+```
+
+Then start the server:
+
+```bash
+uvicorn app.main:app --reload
+```
+
+Delete the `.db` file to re-seed from scratch.
+
+### SQLite via Docker Compose
+
+Use the SQLite overlay instead of the local Postgres overlay:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.sqlite.yml up --build -d
+```
+
+This runs the API container with no Postgres dependency. Data persists in a Docker volume.
 
 ---
 
@@ -205,7 +235,8 @@ If `API_KEY` is blank or unset, all requests pass through without auth.
 ├── app/
 │   ├── main.py              # FastAPI app, startup, router registration
 │   ├── config.py            # Reads config.yml to toggle platforms
-│   ├── database.py          # Schema, seed data, DB connection
+│   ├── database.py          # Schema, seed data, re-exports get_db/init_db
+│   ├── db_backend.py        # DB abstraction (Postgres/SQLite), connection wrappers
 │   ├── helpers.py           # Pagination and response formatting
 │   └── routes/
 │       ├── basis.py
@@ -216,11 +247,12 @@ If `API_KEY` is blank or unset, all requests pass through without auth.
 │       └── adswizz.py
 ├── tests/
 ├── config.yml               # Enable/disable platform APIs
-├── .env.local.example       # Env template for local Docker
+├── .env.local.example       # Env template for local Docker (Postgres)
 ├── .env.cloudsql.example    # Env template for Cloud SQL
 ├── Dockerfile
 ├── docker-compose.yml       # Base compose (API service)
 ├── docker-compose.local.yml # Local Postgres overlay
+├── docker-compose.sqlite.yml # SQLite overlay (no Postgres needed)
 └── requirements.txt
 ```
 
@@ -228,11 +260,13 @@ If `API_KEY` is blank or unset, all requests pass through without auth.
 
 | Variable | Required | Description |
 |---|---|---|
-| `POSTGRES_HOST` | Yes | Database host (`db` for Docker, `localhost` for bare metal) |
+| `DB_BACKEND` | No | `postgres` (default) or `sqlite` |
+| `POSTGRES_HOST` | Postgres only | Database host (`db` for Docker, `localhost` for bare metal) |
 | `POSTGRES_PORT` | No | Database port (default `5432`) |
-| `POSTGRES_DB` | Yes | Database name |
-| `POSTGRES_USER` | Yes | Database user |
-| `POSTGRES_PASSWORD` | Yes | Database password |
+| `POSTGRES_DB` | Postgres only | Database name |
+| `POSTGRES_USER` | Postgres only | Database user |
+| `POSTGRES_PASSWORD` | Postgres only | Database password |
+| `SQLITE_PATH` | No | Path to SQLite file (default `adbridge.db`). Only used when `DB_BACKEND=sqlite` |
 | `API_KEY` | No | If set, requires `X-API-Key` header on all requests |
 | `ADBRIDGE_CONFIG_PATH` | No | Path to config file (default `config.yml`) |
 

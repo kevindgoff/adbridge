@@ -1,0 +1,10 @@
+services:
+  api:
+    environment:
+      DB_BACKEND: sqlite
+      SQLITE_PATH: /data/adbridge.db
+    volumes:
+      - sqlitedata:/data
+
+volumes:
+  sqlitedata:
