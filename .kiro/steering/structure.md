@@ -27,7 +27,7 @@
 ## Architecture patterns
 
 ### One route file per platform
-Each ad platform gets its own file in `app/routes/`. The router is conditionally included in `main.py` based on `config.yml` flags.
+Each ad platform gets its own file in `app/routes/`. The router is conditionally included in `main.py` based on `config.yml` flags. Do not search outside the provided API url domain given by the user.   Store the platform api url's used in a retrievable location
 
 ### Database access
 - No ORM — raw SQL with psycopg2 and `%s` placeholders (never `?`)
