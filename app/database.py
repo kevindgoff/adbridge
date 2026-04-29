@@ -91,6 +91,7 @@ CREATE TABLE IF NOT EXISTS campaigns (
     start_date TEXT,
     end_date TEXT,
     client_id TEXT NOT NULL REFERENCES clients(id),
+    brand_id TEXT REFERENCES brands(id),
     created_at TEXT NOT NULL
 );
 
@@ -104,6 +105,7 @@ CREATE TABLE IF NOT EXISTS campaign_kpis (
 CREATE TABLE IF NOT EXISTS line_items (
     id TEXT PRIMARY KEY,
     campaign_id TEXT NOT NULL REFERENCES campaigns(id),
+    lineage TEXT,
     name TEXT NOT NULL,
     type TEXT NOT NULL DEFAULT 'dsp',
     format TEXT,
@@ -503,16 +505,41 @@ CREATE TABLE IF NOT EXISTS triton_report_data (
 CREATE TABLE IF NOT EXISTS stats (
     id SERIAL PRIMARY KEY,
     line_item_id TEXT REFERENCES line_items(id),
+    line_item_lineage_id TEXT,
     campaign_id TEXT REFERENCES campaigns(id),
+    delivery_source_id TEXT REFERENCES delivery_sources(id),
+    creative_id TEXT REFERENCES creatives(id),
+    conversion_id TEXT REFERENCES conversions(id),
+    external_ad_ref TEXT,
     date TEXT NOT NULL,
-    impressions INTEGER DEFAULT 0,
-    clicks INTEGER DEFAULT 0,
-    spend REAL DEFAULT 0.0,
-    viewability REAL DEFAULT 0.0,
-    video_completions INTEGER DEFAULT 0,
+    delivered_impressions INTEGER DEFAULT 0,
+    delivered_impressions_raw REAL DEFAULT 0,
+    delivered_clicks INTEGER DEFAULT 0,
+    delivered_eligible_impressions INTEGER DEFAULT 0,
+    delivered_measurable_impressions INTEGER DEFAULT 0,
+    delivered_viewable_impressions INTEGER DEFAULT 0,
+    delivered_interactions INTEGER DEFAULT 0,
+    delivered_video_starts INTEGER DEFAULT 0,
+    delivered_video_completions INTEGER DEFAULT 0,
+    delivered_total_view_conversions INTEGER DEFAULT 0,
+    delivered_total_click_conversions INTEGER DEFAULT 0,
+    delivered_total_conversions INTEGER DEFAULT 0,
+    delivered_cpa_view_conversions REAL DEFAULT 0,
+    delivered_cpa_click_conversions REAL DEFAULT 0,
+    delivered_cpa_total_conversions REAL DEFAULT 0,
+    delivered_inventory_spend REAL DEFAULT 0,
+    delivered_data_spend REAL DEFAULT 0,
+    delivered_units INTEGER DEFAULT 0,
+    total_spend REAL DEFAULT 0,
+    media_spend REAL DEFAULT 0,
+    ad_serving_spend REAL DEFAULT 0,
+    auctions_won INTEGER DEFAULT 0,
     click_conversions INTEGER DEFAULT 0,
+    click_conversion_revenue REAL DEFAULT 0,
     view_conversions INTEGER DEFAULT 0,
-    conversion_revenue REAL DEFAULT 0.0
+    view_conversion_revenue REAL DEFAULT 0,
+    total_conversions INTEGER DEFAULT 0,
+    total_conversion_revenue REAL DEFAULT 0
 );
 
 -- ==================== Hivestack (OpenRTB 2.5 DOOH) Tables ====================
@@ -1133,15 +1160,16 @@ def _seed_core(cur):
         cid = _uuid()
         campaign_ids.append(cid)
         client_idx = i % len(client_ids)
+        brand_idx = i % len(brand_ids)
         cur.execute(
-            "INSERT INTO campaigns VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            "INSERT INTO campaigns VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
             (
                 cid, f"Campaign {i+1} - {'Spring' if i < 4 else 'Summer'} 2025",
                 f"UGCID-{1000+i}", f"Initiative {'Alpha' if i < 4 else 'Beta'}",
                 statuses[i % 3],
                 round(random.uniform(10000, 500000), 2), "USD",
                 _past_date(90 - i * 10), _future_date(30 + i * 10),
-                client_ids[client_idx], now,
+                client_ids[client_idx], brand_ids[brand_idx], now,
             ),
         )
         for kid in random.sample(kpi_ids, k=2):
@@ -1157,11 +1185,12 @@ def _seed_core(cur):
     for camp_id in campaign_ids:
         for j in range(random.randint(2, 4)):
             lid = _uuid()
+            lineage = _uuid()
             line_item_ids.append((lid, camp_id))
             cur.execute(
-                "INSERT INTO line_items VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                "INSERT INTO line_items VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
                 (
-                    lid, camp_id, f"Line Item {j+1}",
+                    lid, camp_id, lineage, f"Line Item {j+1}",
                     random.choice(["direct", "dsp"]),
                     random.choice(formats), random.choice(platforms),
                     "300x250,728x90", random.choice(["cpm", "cpc", "cpv"]),
@@ -1285,23 +1314,77 @@ def _seed_core(cur):
             ),
         )
 
+    # --- Collect delivery_source and creative IDs for stats FK references ---
+    cur.execute("SELECT id FROM delivery_sources")
+    ds_ids = [r["id"] for r in cur.fetchall()]
+    cur.execute("SELECT id FROM creatives")
+    cr_ids = [r["id"] for r in cur.fetchall()]
+    cur.execute("SELECT id FROM conversions")
+    conv_ids = [r["id"] for r in cur.fetchall()]
+
     # --- Stats ---
     for lid, camp_id in line_item_ids:
+        lineage_id = _uuid()
         for day_offset in range(30):
             date = _past_date(30 - day_offset)
             impressions = random.randint(1000, 50000)
+            impressions_raw = round(impressions + random.uniform(0, 0.99), 2)
             clicks = random.randint(10, int(impressions * 0.05))
-            spend = round(random.uniform(50, 2000), 2)
+            eligible_imps = random.randint(int(impressions * 0.7), impressions)
+            measurable_imps = random.randint(int(eligible_imps * 0.6), eligible_imps)
+            viewable_imps = random.randint(int(measurable_imps * 0.3), measurable_imps)
+            interactions = random.randint(0, int(impressions * 0.01))
+            video_starts = random.randint(0, int(impressions * 0.4))
+            video_completions = random.randint(0, video_starts) if video_starts else 0
+            view_conv = random.randint(0, 10)
+            click_conv = random.randint(0, 20)
+            total_conv = click_conv + view_conv
+            cpa_view = round(random.uniform(5, 50), 2) if view_conv else 0
+            cpa_click = round(random.uniform(5, 50), 2) if click_conv else 0
+            cpa_total = round(random.uniform(5, 50), 2) if total_conv else 0
+            inventory_spend = round(random.uniform(30, 1500), 2)
+            data_spend = round(random.uniform(5, 200), 2)
+            media_sp = round(inventory_spend + data_spend, 2)
+            ad_serving_sp = round(random.uniform(5, 100), 2)
+            total_sp = round(media_sp + ad_serving_sp, 2)
+            delivered_units = impressions
+            auctions_won = random.randint(int(impressions * 0.8), impressions)
+            click_conv_rev = round(random.uniform(0, 300), 2) if click_conv else 0
+            view_conv_rev = round(random.uniform(0, 200), 2) if view_conv else 0
+            total_conv_rev = round(click_conv_rev + view_conv_rev, 2)
+            ds_id = random.choice(ds_ids) if ds_ids else None
+            cr_id = random.choice(cr_ids) if cr_ids else None
+            cn_id = random.choice(conv_ids) if conv_ids else None
+            ext_ad_ref = f"EXT-AD-{random.randint(10000,99999)}"
             cur.execute(
-                "INSERT INTO stats (line_item_id,campaign_id,date,impressions,clicks,spend,"
-                "viewability,video_completions,click_conversions,view_conversions,conversion_revenue) "
-                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                "INSERT INTO stats (line_item_id,line_item_lineage_id,campaign_id,"
+                "delivery_source_id,creative_id,conversion_id,external_ad_ref,date,"
+                "delivered_impressions,delivered_impressions_raw,delivered_clicks,"
+                "delivered_eligible_impressions,delivered_measurable_impressions,"
+                "delivered_viewable_impressions,delivered_interactions,"
+                "delivered_video_starts,delivered_video_completions,"
+                "delivered_total_view_conversions,delivered_total_click_conversions,"
+                "delivered_total_conversions,delivered_cpa_view_conversions,"
+                "delivered_cpa_click_conversions,delivered_cpa_total_conversions,"
+                "delivered_inventory_spend,delivered_data_spend,delivered_units,"
+                "total_spend,media_spend,ad_serving_spend,auctions_won,"
+                "click_conversions,click_conversion_revenue,"
+                "view_conversions,view_conversion_revenue,"
+                "total_conversions,total_conversion_revenue) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,"
+                "%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
                 (
-                    lid, camp_id, date, impressions, clicks, spend,
-                    round(random.uniform(0.4, 0.95), 4),
-                    random.randint(0, int(impressions * 0.3)),
-                    random.randint(0, 20), random.randint(0, 10),
-                    round(random.uniform(0, 500), 2),
+                    lid, lineage_id, camp_id, ds_id, cr_id, cn_id, ext_ad_ref, date,
+                    impressions, impressions_raw, clicks,
+                    eligible_imps, measurable_imps, viewable_imps, interactions,
+                    video_starts, video_completions,
+                    view_conv, click_conv, total_conv,
+                    cpa_view, cpa_click, cpa_total,
+                    inventory_spend, data_spend, delivered_units,
+                    total_sp, media_sp, ad_serving_sp, auctions_won,
+                    click_conv, click_conv_rev,
+                    view_conv, view_conv_rev,
+                    total_conv, total_conv_rev,
                 ),
             )
 
