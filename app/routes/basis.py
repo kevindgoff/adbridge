@@ -1,5 +1,6 @@
 """All Basis API mock endpoints under /basis/v1."""
 
+import uuid
 from fastapi import APIRouter, Depends, HTTPException, Query
 from typing import Optional
 
@@ -7,6 +8,10 @@ from app.database import get_db
 from app.helpers import paginate, list_response, single_response
 
 router = APIRouter(prefix="/basis/v1")
+
+
+def _uuid():
+    return str(uuid.uuid4())
 
 
 def _q(conn, sql, params=()):
@@ -51,7 +56,8 @@ def get_agency(conn=Depends(get_db)):
 def list_clients(cursor: Optional[str] = None, query: Optional[str] = None,
                  conn=Depends(get_db)):
     data, meta = paginate(conn, "clients", cursor, query=query,
-                          query_columns=["name", "contact_name", "billing_name"])
+                          query_columns=["name", "contact_first_name", "contact_last_name",
+                                         "contact_email", "billing_name", "notes"])
     return list_response(data, meta)
 
 
@@ -73,14 +79,21 @@ def list_brands(cursor: Optional[str] = None, query: Optional[str] = None,
         where, params = "client_id = %s", (client_id,)
     data, meta = paginate(conn, "brands", cursor, query=query,
                           query_columns=["name"], where_clause=where, where_params=params)
-    # Attach verticals
+    # Remove client_id from response (not in spec)
     for brand in data:
+        brand.pop("client_id", None)
+        # Attach verticals with subverticals structure
         verts = _q(conn,
-            "SELECT v.id, v.name, bv.subvertical FROM brand_verticals bv "
+            "SELECT v.id, v.name, v.created_at, bv.subvertical FROM brand_verticals bv "
             "JOIN verticals v ON v.id = bv.vertical_id WHERE bv.brand_id = %s",
             (brand["id"],)
         ).fetchall()
-        brand["verticals"] = [dict(v) for v in verts]
+        brand["verticals"] = []
+        for v in verts:
+            vert = {"id": v["id"], "name": v["name"], "created_at": v["created_at"], "subverticals": []}
+            if v["subvertical"]:
+                vert["subverticals"].append({"id": _uuid(), "name": v["subvertical"], "created_at": v["created_at"]})
+            brand["verticals"].append(vert)
     return list_response(data, meta)
 
 
@@ -90,12 +103,18 @@ def get_brand(brand_id: str, conn=Depends(get_db)):
     if not row:
         raise HTTPException(404, "Brand not found")
     data = dict(row)
+    data.pop("client_id", None)
     verts = _q(conn,
-        "SELECT v.id, v.name, bv.subvertical FROM brand_verticals bv "
+        "SELECT v.id, v.name, v.created_at, bv.subvertical FROM brand_verticals bv "
         "JOIN verticals v ON v.id = bv.vertical_id WHERE bv.brand_id = %s",
         (brand_id,)
     ).fetchall()
-    data["verticals"] = [dict(v) for v in verts]
+    data["verticals"] = []
+    for v in verts:
+        vert = {"id": v["id"], "name": v["name"], "created_at": v["created_at"], "subverticals": []}
+        if v["subvertical"]:
+            vert["subverticals"].append({"id": _uuid(), "name": v["subvertical"], "created_at": v["created_at"]})
+        data["verticals"].append(vert)
     return single_response(data)
 
 
@@ -116,15 +135,33 @@ def list_campaigns(cursor: Optional[str] = None, query: Optional[str] = None,
     data, meta = paginate(conn, "campaigns", cursor, query=query,
                           query_columns=["name", "ugcid", "initiative_name"],
                           where_clause=where, where_params=tuple(params))
-    # Attach KPIs
+    all_team_users = {}
     for camp in data:
+        # Remove budget_currency if present, not in spec
+        camp.pop("budget_currency", None)
+        # Attach objectives (renamed from kpi_objectives)
         kpis = _q(conn,
-            "SELECT k.id, k.name, k.goal_type, ck.goal_value FROM campaign_kpis ck "
+            "SELECT ck.kpi_id as id, k.name, k.name as kpi_name, ck.goal_value as goal "
+            "FROM campaign_kpis ck "
             "JOIN kpis k ON k.id = ck.kpi_id WHERE ck.campaign_id = %s",
             (camp["id"],)
         ).fetchall()
-        camp["kpi_objectives"] = [dict(k) for k in kpis]
-    return list_response(data, meta)
+        camp["objectives"] = [
+            {**dict(k), "other_objective_type_description": None,
+             "other_kpi_description": None, "created_at": camp.get("created_at")}
+            for k in kpis
+        ]
+        # Account team (mock: use the single user)
+        user = _q(conn, "SELECT * FROM users LIMIT 1").fetchone()
+        if user:
+            camp["account_team"] = [user["id"]]
+            all_team_users[user["id"]] = dict(user)
+        else:
+            camp["account_team"] = []
+    result = list_response(data, meta)
+    if all_team_users:
+        result["included"] = {"account_team_users": list(all_team_users.values())}
+    return result
 
 
 @router.get("/campaigns/{campaign_id}")
@@ -133,16 +170,42 @@ def get_campaign(campaign_id: str, conn=Depends(get_db)):
     if not row:
         raise HTTPException(404, "Campaign not found")
     data = dict(row)
+    data.pop("budget_currency", None)
     kpis = _q(conn,
-        "SELECT k.id, k.name, k.goal_type, ck.goal_value FROM campaign_kpis ck "
+        "SELECT ck.kpi_id as id, k.name, k.name as kpi_name, ck.goal_value as goal "
+        "FROM campaign_kpis ck "
         "JOIN kpis k ON k.id = ck.kpi_id WHERE ck.campaign_id = %s",
         (campaign_id,)
     ).fetchall()
-    data["kpi_objectives"] = [dict(k) for k in kpis]
-    return single_response(data)
+    data["objectives"] = [
+        {**dict(k), "other_objective_type_description": None,
+         "other_kpi_description": None, "created_at": data.get("created_at")}
+        for k in kpis
+    ]
+    user = _q(conn, "SELECT * FROM users LIMIT 1").fetchone()
+    data["account_team"] = [user["id"]] if user else []
+    result = single_response(data)
+    if user:
+        result["included"] = {"account_team_users": [dict(user)]}
+    return result
 
 
 # ──────────────────────────── Line Items ─────────────────────────────────────
+
+def _format_line_item(row):
+    """Reshape a line_item DB row to match the Basis API spec."""
+    data = dict(row)
+    # Convert comma-separated strings to arrays
+    for field in ("ad_sizes", "formats", "platforms"):
+        val = data.get(field)
+        if isinstance(val, str):
+            data[field] = [s.strip() for s in val.split(",") if s.strip()]
+        elif val is None:
+            data[field] = []
+    # Remove created_at (not in spec response)
+    data.pop("created_at", None)
+    return data
+
 
 @router.get("/campaigns/{campaign_id}/line_items")
 def list_line_items(campaign_id: str, cursor: Optional[str] = None,
@@ -150,7 +213,17 @@ def list_line_items(campaign_id: str, cursor: Optional[str] = None,
     data, meta = paginate(conn, "line_items", cursor, query=query,
                           query_columns=["name"],
                           where_clause="campaign_id = %s", where_params=(campaign_id,))
-    return list_response(data, meta)
+    data = [_format_line_item(item) for item in data]
+    result = list_response(data, meta)
+    # Build included.media_plans
+    plans = {}
+    for item in data:
+        mp = item.get("media_plan")
+        if mp and mp not in plans:
+            plans[mp] = {"id": mp, "name": f"Media Plan", "approval_version": 1, "approved_at": None}
+    if plans:
+        result["included"] = {"media_plans": list(plans.values())}
+    return result
 
 
 @router.get("/campaigns/{campaign_id}/line_items/{line_item_id}")
@@ -161,10 +234,27 @@ def get_line_item(campaign_id: str, line_item_id: str, conn=Depends(get_db)):
     ).fetchone()
     if not row:
         raise HTTPException(404, "Line item not found")
-    return single_response(dict(row))
+    data = _format_line_item(row)
+    result = single_response(data)
+    mp = data.get("media_plan")
+    if mp:
+        result["included"] = {"media_plans": [{"id": mp, "name": "Media Plan", "approval_version": 1, "approved_at": None}]}
+    return result
 
 
 # ──────────────────────────── Add-ons ────────────────────────────────────────
+
+def _format_addon(row):
+    """Reshape an addon DB row to match the Basis API spec."""
+    data = dict(row)
+    data.pop("created_at", None)
+    # Add mock media_plan nested object
+    data["media_plan"] = {
+        "id": _uuid(), "name": "Media Plan",
+        "approval_version": 1, "approved_at": None,
+    }
+    return data
+
 
 @router.get("/campaigns/{campaign_id}/addons")
 def list_addons(campaign_id: str, cursor: Optional[str] = None,
@@ -172,6 +262,7 @@ def list_addons(campaign_id: str, cursor: Optional[str] = None,
     data, meta = paginate(conn, "addons", cursor, query=query,
                           query_columns=["name"],
                           where_clause="campaign_id = %s", where_params=(campaign_id,))
+    data = [_format_addon(item) for item in data]
     return list_response(data, meta)
 
 
@@ -183,7 +274,7 @@ def get_addon(campaign_id: str, addon_id: str, conn=Depends(get_db)):
     ).fetchone()
     if not row:
         raise HTTPException(404, "Add-on not found")
-    return single_response(dict(row))
+    return single_response(_format_addon(row))
 
 
 # ──────────────────────────── Vendors ────────────────────────────────────────
@@ -211,14 +302,20 @@ def list_properties(cursor: Optional[str] = None, query: Optional[str] = None,
                     campaign_id: Optional[str] = None, conn=Depends(get_db)):
     data, meta = paginate(conn, "properties", cursor, query=query,
                           query_columns=["name"])
+    all_verticals = {}
     for prop in data:
         verts = _q(conn,
-            "SELECT v.id, v.name FROM property_verticals pv "
+            "SELECT v.id, v.name, v.created_at FROM property_verticals pv "
             "JOIN verticals v ON v.id = pv.vertical_id WHERE pv.property_id = %s",
             (prop["id"],)
         ).fetchall()
-        prop["verticals"] = [dict(v) for v in verts]
-    return list_response(data, meta)
+        prop["verticals"] = [v["id"] for v in verts]
+        for v in verts:
+            all_verticals[v["id"]] = dict(v)
+    result = list_response(data, meta)
+    if all_verticals:
+        result["included"] = {"verticals": list(all_verticals.values())}
+    return result
 
 
 @router.get("/properties/{property_id}")
@@ -228,12 +325,15 @@ def get_property(property_id: str, conn=Depends(get_db)):
         raise HTTPException(404, "Property not found")
     data = dict(row)
     verts = _q(conn,
-        "SELECT v.id, v.name FROM property_verticals pv "
+        "SELECT v.id, v.name, v.created_at FROM property_verticals pv "
         "JOIN verticals v ON v.id = pv.vertical_id WHERE pv.property_id = %s",
         (property_id,)
     ).fetchall()
-    data["verticals"] = [dict(v) for v in verts]
-    return single_response(data)
+    data["verticals"] = [v["id"] for v in verts]
+    result = single_response(data)
+    if verts:
+        result["included"] = {"verticals": [dict(v) for v in verts]}
+    return result
 
 
 # ──────────────────────────── Verticals ──────────────────────────────────────
@@ -292,13 +392,13 @@ def get_creative(creative_id: str, conn=Depends(get_db)):
 
 @router.get("/conversions")
 def list_conversions(cursor: Optional[str] = None, conn=Depends(get_db)):
-    data, meta = paginate(conn, "conversions", cursor)
+    data, meta = paginate(conn, "conversions", cursor, order_by="conversion_id")
     return list_response(data, meta)
 
 
 @router.get("/conversions/{conversion_id}")
 def get_conversion(conversion_id: str, conn=Depends(get_db)):
-    row = _q(conn, "SELECT * FROM conversions WHERE id = %s", (conversion_id,)).fetchone()
+    row = _q(conn, "SELECT * FROM conversions WHERE conversion_id = %s", (conversion_id,)).fetchone()
     if not row:
         raise HTTPException(404, "Conversion not found")
     return single_response(dict(row))
@@ -322,19 +422,29 @@ def get_delivery_source(source_id: str, conn=Depends(get_db)):
 
 # ──────────────────────────── Groups ─────────────────────────────────────────
 
+def _format_group(row):
+    """Reshape a group DB row to match the Basis API spec."""
+    data = dict(row)
+    data["budget"] = {
+        "flight_dates": {
+            "from": data.pop("flight_start"),
+            "to": data.pop("flight_end"),
+        },
+        "even_delivery_enabled": bool(data.pop("even_delivery")),
+        "type": data.pop("budget_type"),
+        "amount": str(data.pop("budget_amount")),
+    }
+    data["pacing_setting"] = data.pop("pacing_control_level", None)
+    data.pop("created_at", None)
+    return data
+
+
 @router.get("/groups")
 def list_groups(cursor: Optional[str] = None, query: Optional[str] = None,
                 conn=Depends(get_db)):
     data, meta = paginate(conn, "groups_", cursor, query=query,
                           query_columns=["name"])
-    for g in data:
-        g["budget"] = {
-            "amount": g.pop("budget_amount"),
-            "type": g.pop("budget_type"),
-            "flight_start": g.pop("flight_start"),
-            "flight_end": g.pop("flight_end"),
-            "even_delivery": bool(g.pop("even_delivery")),
-        }
+    data = [_format_group(g) for g in data]
     return list_response(data, meta)
 
 
@@ -343,32 +453,36 @@ def get_group(group_id: int, conn=Depends(get_db)):
     row = _q(conn, "SELECT * FROM groups_ WHERE id = %s", (group_id,)).fetchone()
     if not row:
         raise HTTPException(404, "Group not found")
-    data = dict(row)
-    data["budget"] = {
-        "amount": data.pop("budget_amount"),
-        "type": data.pop("budget_type"),
-        "flight_start": data.pop("flight_start"),
-        "flight_end": data.pop("flight_end"),
-        "even_delivery": bool(data.pop("even_delivery")),
-    }
-    return single_response(data)
+    return single_response(_format_group(row))
 
 
 # ──────────────────────────── Tactics ────────────────────────────────────────
+
+def _format_tactic(row):
+    """Reshape a tactic DB row to match the Basis API spec."""
+    data = dict(row)
+    data["budget"] = {
+        "amount": str(data.pop("budget_amount")),
+        "schedule": {
+            "flight_dates": {
+                "from": data.pop("flight_start"),
+                "to": data.pop("flight_end"),
+            },
+        },
+        "type": data.pop("budget_type"),
+        "even_delivery_enabled": False,
+        "pacing_priority": data.pop("pacing_priority"),
+    }
+    data.pop("created_at", None)
+    return data
+
 
 @router.get("/tactics")
 def list_tactics(cursor: Optional[str] = None, query: Optional[str] = None,
                  conn=Depends(get_db)):
     data, meta = paginate(conn, "tactics", cursor, query=query,
                           query_columns=["name"])
-    for t in data:
-        t["budget"] = {
-            "amount": t.pop("budget_amount"),
-            "type": t.pop("budget_type"),
-            "flight_start": t.pop("flight_start"),
-            "flight_end": t.pop("flight_end"),
-            "pacing_priority": t.pop("pacing_priority"),
-        }
+    data = [_format_tactic(t) for t in data]
     return list_response(data, meta)
 
 
@@ -377,15 +491,7 @@ def get_tactic(tactic_id: int, conn=Depends(get_db)):
     row = _q(conn, "SELECT * FROM tactics WHERE id = %s", (tactic_id,)).fetchone()
     if not row:
         raise HTTPException(404, "Tactic not found")
-    data = dict(row)
-    data["budget"] = {
-        "amount": data.pop("budget_amount"),
-        "type": data.pop("budget_type"),
-        "flight_start": data.pop("flight_start"),
-        "flight_end": data.pop("flight_end"),
-        "pacing_priority": data.pop("pacing_priority"),
-    }
-    return single_response(data)
+    return single_response(_format_tactic(row))
 
 
 # ──────────────────────────── Stats ──────────────────────────────────────────
@@ -436,8 +542,8 @@ def _build_performance_metrics(row):
     vid_starts = row.get("delivered_video_starts", 0) or 0
     viewable = row.get("delivered_viewable_impressions", 0) or 0
     total_conv = row.get("delivered_total_conversions", 0) or 0
-    contracted_spend = row.get("contracted_spend") or spend * 1.1
-    contracted_units = row.get("contracted_units") or imps
+    contracted_spend = row.get("total_spend_contracted") or spend * 1.1
+    contracted_units = row.get("media_contracted_units") or imps
 
     return {
         "ecpm": round(_safe_div(spend, imps) * 1000, 4),
@@ -549,13 +655,13 @@ def get_stats(scope: str,
                    MIN(s.date) as actual_start_date,
                    MAX(s.date) as data_through_date,
                    {dm_sum},
-                   li.contracted_spend, li.contracted_units
+                   li.total_spend_contracted, li.media_contracted_units
             FROM stats s
             LEFT JOIN campaigns c ON s.campaign_id = c.id
             LEFT JOIN line_items li ON s.line_item_id = li.id
             {where}
             GROUP BY s.line_item_id, s.line_item_lineage_id,
-                     li.contracted_spend, li.contracted_units
+                     li.total_spend_contracted, li.media_contracted_units
         """
     elif scope == "daily_by_line_item":
         sql = f"""

@@ -46,9 +46,12 @@ CREATE TABLE IF NOT EXISTS agencies (
 CREATE TABLE IF NOT EXISTS clients (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
-    contact_name TEXT,
-    contact_email TEXT,
     billing_name TEXT,
+    contact_first_name TEXT,
+    contact_last_name TEXT,
+    contact_email TEXT,
+    contact_phone TEXT,
+    contact_extension TEXT,
     notes TEXT,
     created_at TEXT NOT NULL
 );
@@ -86,8 +89,7 @@ CREATE TABLE IF NOT EXISTS campaigns (
     ugcid TEXT,
     initiative_name TEXT,
     status TEXT NOT NULL DEFAULT 'live',
-    budget_amount REAL,
-    budget_currency TEXT DEFAULT 'USD',
+    approved_budget REAL,
     start_date TEXT,
     end_date TEXT,
     client_id TEXT NOT NULL REFERENCES clients(id),
@@ -104,31 +106,47 @@ CREATE TABLE IF NOT EXISTS campaign_kpis (
 
 CREATE TABLE IF NOT EXISTS line_items (
     id TEXT PRIMARY KEY,
-    campaign_id TEXT NOT NULL REFERENCES campaigns(id),
     lineage TEXT,
+    campaign_id TEXT NOT NULL REFERENCES campaigns(id),
+    property_id TEXT REFERENCES properties(id),
+    vendor_id TEXT REFERENCES vendors(id),
     name TEXT NOT NULL,
     type TEXT NOT NULL DEFAULT 'dsp',
-    format TEXT,
-    platform TEXT,
-    ad_sizes TEXT,
-    rate_type TEXT,
-    rate_amount REAL,
-    contracted_spend REAL,
-    contracted_units INTEGER,
-    advertising_channel TEXT,
+    media_plan TEXT,
     start_date TEXT,
     end_date TEXT,
+    ad_sizes TEXT,
+    formats TEXT,
+    platforms TEXT,
+    rate_type TEXT,
+    total_spend_contracted REAL,
+    amount_gain_loss_contracted REAL,
+    margin_pct_contracted REAL,
+    media_rate REAL,
+    media_contracted_units INTEGER,
+    media_spend_contracted REAL,
+    ad_serving_rate_type TEXT,
+    ad_server TEXT,
+    ad_serving_cost REAL,
+    ad_serving_rate REAL,
+    ad_serving_estimated_clicks INTEGER,
+    ad_serving_estimated_impressions INTEGER,
+    ad_serving_spend_contracted REAL,
+    kpi_id TEXT REFERENCES kpis(id),
+    kpi_goal REAL,
+    advertising_channel TEXT,
     created_at TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS addons (
     id TEXT PRIMARY KEY,
+    lineage TEXT,
     campaign_id TEXT NOT NULL REFERENCES campaigns(id),
     name TEXT NOT NULL,
     start_date TEXT,
     end_date TEXT,
-    contracted_spend REAL,
-    actual_spend REAL,
+    addon_spend_contracted REAL,
+    addon_spend REAL,
     created_at TEXT NOT NULL
 );
 
@@ -157,19 +175,18 @@ CREATE TABLE IF NOT EXISTS creatives (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
     external_source TEXT,
-    external_reference TEXT,
+    external_ref TEXT,
     media_type TEXT,
-    classification TEXT,
-    pixel_width INTEGER,
-    pixel_height INTEGER,
+    ad_classification TEXT,
+    pixel_size TEXT,
     created_at TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS conversions (
-    id TEXT PRIMARY KEY,
+    conversion_id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
     external_source TEXT,
-    external_reference TEXT,
+    external_ref TEXT,
     created_at TEXT NOT NULL
 );
 
@@ -509,7 +526,7 @@ CREATE TABLE IF NOT EXISTS stats (
     campaign_id TEXT REFERENCES campaigns(id),
     delivery_source_id TEXT REFERENCES delivery_sources(id),
     creative_id TEXT REFERENCES creatives(id),
-    conversion_id TEXT REFERENCES conversions(id),
+    conversion_id TEXT REFERENCES conversions(conversion_id),
     external_ad_ref TEXT,
     date TEXT NOT NULL,
     delivered_impressions INTEGER DEFAULT 0,
@@ -1120,17 +1137,18 @@ def _seed_core(cur):
 
     # --- Clients ---
     client_data = [
-        ("Acme Corporation", "Jane Smith", "jane@acme.com", "Acme Corp Billing"),
-        ("TechNova Inc", "Bob Chen", "bob@technova.com", "TechNova Billing"),
-        ("GreenLeaf Brands", "Sara Johnson", "sara@greenleaf.com", "GreenLeaf LLC"),
+        ("Acme Corporation", "Acme Corp Billing", "Jane", "Smith", "jane@acme.com", "555-0101", "101"),
+        ("TechNova Inc", "TechNova Billing", "Bob", "Chen", "bob@technova.com", "555-0102", "202"),
+        ("GreenLeaf Brands", "GreenLeaf LLC", "Sara", "Johnson", "sara@greenleaf.com", "555-0103", None),
     ]
     client_ids = []
-    for name, contact, email, billing in client_data:
+    for name, billing, cfirst, clast, email, phone, ext in client_data:
         cid = _uuid()
         client_ids.append(cid)
         cur.execute(
-            "INSERT INTO clients VALUES (%s,%s,%s,%s,%s,%s,%s)",
-            (cid, name, contact, email, billing, "Synthetic test client", now),
+            "INSERT INTO clients VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            (cid, name, billing, cfirst, clast, email, phone, ext,
+             "Synthetic test client", now),
         )
 
     # --- Brands ---
@@ -1162,12 +1180,12 @@ def _seed_core(cur):
         client_idx = i % len(client_ids)
         brand_idx = i % len(brand_ids)
         cur.execute(
-            "INSERT INTO campaigns VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            "INSERT INTO campaigns VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
             (
                 cid, f"Campaign {i+1} - {'Spring' if i < 4 else 'Summer'} 2025",
                 f"UGCID-{1000+i}", f"Initiative {'Alpha' if i < 4 else 'Beta'}",
                 statuses[i % 3],
-                round(random.uniform(10000, 500000), 2), "USD",
+                round(random.uniform(10000, 500000), 2),
                 _past_date(90 - i * 10), _future_date(30 + i * 10),
                 client_ids[client_idx], brand_ids[brand_idx], now,
             ),
@@ -1179,26 +1197,57 @@ def _seed_core(cur):
             )
 
     # --- Line Items ---
-    formats = ["display", "video", "native", "audio"]
-    platforms = ["desktop", "mobile", "ctv", "all"]
+    formats_list = ["display", "video", "native", "audio"]
+    platforms_list = ["desktop", "mobile", "ctv", "all"]
     line_item_ids = []
+    # Collect vendor and property IDs for FK references
+    cur.execute("SELECT id FROM vendors")
+    vendor_ids = [r["id"] for r in cur.fetchall()]
+    cur.execute("SELECT id FROM properties")
+    property_ids = [r["id"] for r in cur.fetchall()]
     for camp_id in campaign_ids:
         for j in range(random.randint(2, 4)):
             lid = _uuid()
             lineage = _uuid()
+            media_plan_id = _uuid()
             line_item_ids.append((lid, camp_id))
+            total_contracted = round(random.uniform(5000, 100000), 2)
+            media_contracted = round(total_contracted * random.uniform(0.7, 0.9), 2)
+            ad_serving_contracted = round(total_contracted - media_contracted, 2)
+            margin = round(random.uniform(0.05, 0.25), 4)
+            fmt = random.choice(formats_list)
+            plat = random.choice(platforms_list)
+            v_id = random.choice(vendor_ids) if vendor_ids else None
+            p_id = random.choice(property_ids) if property_ids else None
+            k_id = random.choice(kpi_ids) if kpi_ids else None
             cur.execute(
-                "INSERT INTO line_items VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                "INSERT INTO line_items VALUES "
+                "(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
                 (
-                    lid, camp_id, lineage, f"Line Item {j+1}",
+                    lid, lineage, camp_id, p_id, v_id,
+                    f"Line Item {j+1}",
                     random.choice(["direct", "dsp"]),
-                    random.choice(formats), random.choice(platforms),
-                    "300x250,728x90", random.choice(["cpm", "cpc", "cpv"]),
+                    media_plan_id,
+                    _past_date(60), _future_date(30),
+                    "300x250,728x90", fmt, plat,
+                    random.choice(["cpm", "cpc", "cpv"]),
+                    total_contracted,
+                    round(total_contracted * margin, 2),
+                    margin,
                     round(random.uniform(1, 25), 2),
-                    round(random.uniform(5000, 100000), 2),
                     random.randint(10000, 500000),
+                    media_contracted,
+                    random.choice(["cpm", "flat"]),
+                    random.choice([None, "Google CM360", "Sizmek"]),
+                    round(random.uniform(100, 2000), 2),
+                    round(random.uniform(0.01, 0.10), 4),
+                    random.randint(1000, 50000),
+                    random.randint(10000, 500000),
+                    ad_serving_contracted,
+                    k_id,
+                    round(random.uniform(0.5, 10.0), 2),
                     random.choice(["programmatic", "direct", "social"]),
-                    _past_date(60), _future_date(30), now,
+                    now,
                 ),
             )
 
@@ -1207,9 +1256,10 @@ def _seed_core(cur):
         aid = _uuid()
         contracted = round(random.uniform(1000, 10000), 2)
         cur.execute(
-            "INSERT INTO addons VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
+            "INSERT INTO addons VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)",
             (
-                aid, camp_id, random.choice(["Ad Serving Fee", "Data Fee", "Verification Fee"]),
+                aid, _uuid(), camp_id,
+                random.choice(["Ad Serving Fee", "Data Fee", "Verification Fee"]),
                 _past_date(60), _future_date(30),
                 contracted, round(contracted * random.uniform(0.3, 0.9), 2), now,
             ),
@@ -1242,15 +1292,16 @@ def _seed_core(cur):
     sources = ["gcm", "dsp", "upload", "facebook"]
     media_types = ["image", "video", "html5", "native"]
     for i in range(12):
+        w = random.choice([300, 728, 160, 320, 1920])
+        h = random.choice([250, 90, 600, 50, 1080])
         cur.execute(
-            "INSERT INTO creatives VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            "INSERT INTO creatives VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
             (
                 _uuid(), f"Creative {i+1} - {'Banner' if i % 2 == 0 else 'Video'}",
                 random.choice(sources), f"EXT-REF-{10000+i}",
                 random.choice(media_types),
                 random.choice(["standard", "premium", "interactive"]),
-                random.choice([300, 728, 160, 320, 1920]),
-                random.choice([250, 90, 600, 50, 1080]),
+                f"{w}x{h}",
                 now,
             ),
         )
@@ -1319,8 +1370,8 @@ def _seed_core(cur):
     ds_ids = [r["id"] for r in cur.fetchall()]
     cur.execute("SELECT id FROM creatives")
     cr_ids = [r["id"] for r in cur.fetchall()]
-    cur.execute("SELECT id FROM conversions")
-    conv_ids = [r["id"] for r in cur.fetchall()]
+    cur.execute("SELECT conversion_id FROM conversions")
+    conv_ids = [r["conversion_id"] for r in cur.fetchall()]
 
     # --- Stats ---
     for lid, camp_id in line_item_ids:
