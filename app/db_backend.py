@@ -290,7 +290,7 @@ def init_db():
     from app.database import (
         _seed_core, _seed_dv360, _seed_triton_booking,
         _seed_triton, _seed_hivestack, _seed_adswizz,
-        _seed_thetradedesk, _now,
+        _seed_thetradedesk, _seed_gam, _now,
     )
 
     conn = get_connection()
@@ -312,6 +312,7 @@ def init_db():
     _seed_hivestack(cur, now)
     _seed_adswizz(cur, now)
     _seed_thetradedesk(cur, now)
+    _seed_gam(cur, now)
 
     conn.commit()
     cur.close()

@@ -1087,6 +1087,121 @@ CREATE TABLE IF NOT EXISTS ttd_tracking_tags (
     server_side BOOLEAN DEFAULT FALSE,
     created_at TEXT NOT NULL
 );
+
+-- ==================== Google Ad Manager (GAM) Tables ====================
+
+CREATE TABLE IF NOT EXISTS gam_networks (
+    network_code TEXT PRIMARY KEY,
+    display_name TEXT NOT NULL,
+    network_id INTEGER NOT NULL,
+    property_code TEXT,
+    time_zone TEXT DEFAULT 'America/New_York',
+    currency_code TEXT DEFAULT 'USD',
+    effective_root_ad_unit_id INTEGER,
+    update_time TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS gam_companies (
+    company_id INTEGER PRIMARY KEY,
+    network_code TEXT NOT NULL REFERENCES gam_networks(network_code),
+    display_name TEXT NOT NULL,
+    type TEXT NOT NULL DEFAULT 'ADVERTISER',
+    external_id TEXT,
+    address TEXT,
+    email TEXT,
+    comment TEXT,
+    credit_status TEXT DEFAULT 'ACTIVE',
+    update_time TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS gam_orders (
+    order_id INTEGER PRIMARY KEY,
+    network_code TEXT NOT NULL REFERENCES gam_networks(network_code),
+    display_name TEXT NOT NULL,
+    advertiser_id INTEGER NOT NULL REFERENCES gam_companies(company_id),
+    trafficker TEXT,
+    salesperson TEXT,
+    status TEXT NOT NULL DEFAULT 'DRAFT',
+    start_time TEXT,
+    end_time TEXT,
+    unlimited_end_time BOOLEAN DEFAULT FALSE,
+    currency_code TEXT DEFAULT 'USD',
+    external_order_id INTEGER,
+    po_number TEXT,
+    notes TEXT,
+    archived BOOLEAN DEFAULT FALSE,
+    update_time TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS gam_line_items (
+    line_item_id INTEGER PRIMARY KEY,
+    network_code TEXT NOT NULL REFERENCES gam_networks(network_code),
+    order_id INTEGER NOT NULL REFERENCES gam_orders(order_id),
+    display_name TEXT NOT NULL,
+    line_item_type TEXT NOT NULL DEFAULT 'STANDARD',
+    priority INTEGER DEFAULT 8,
+    status TEXT NOT NULL DEFAULT 'DRAFT',
+    start_time TEXT,
+    end_time TEXT,
+    unlimited_end_time BOOLEAN DEFAULT FALSE,
+    cost_type TEXT DEFAULT 'CPM',
+    cost_amount_micros BIGINT DEFAULT 0,
+    cost_currency_code TEXT DEFAULT 'USD',
+    goal_type TEXT DEFAULT 'LIFETIME',
+    goal_units BIGINT DEFAULT 0,
+    delivered_impressions BIGINT DEFAULT 0,
+    delivered_clicks BIGINT DEFAULT 0,
+    creative_rotation_type TEXT DEFAULT 'EVEN',
+    discount_percentage REAL DEFAULT 0,
+    update_time TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS gam_ad_units (
+    ad_unit_id INTEGER PRIMARY KEY,
+    network_code TEXT NOT NULL REFERENCES gam_networks(network_code),
+    display_name TEXT NOT NULL,
+    ad_unit_code TEXT,
+    parent_ad_unit_id INTEGER,
+    status TEXT NOT NULL DEFAULT 'ACTIVE',
+    ad_unit_sizes TEXT,
+    target_window TEXT DEFAULT 'BLANK',
+    explicitly_targeted BOOLEAN DEFAULT FALSE,
+    update_time TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS gam_placements (
+    placement_id INTEGER PRIMARY KEY,
+    network_code TEXT NOT NULL REFERENCES gam_networks(network_code),
+    display_name TEXT NOT NULL,
+    description TEXT,
+    status TEXT NOT NULL DEFAULT 'ACTIVE',
+    targeted_ad_unit_ids TEXT,
+    update_time TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS gam_creatives (
+    creative_id INTEGER PRIMARY KEY,
+    network_code TEXT NOT NULL REFERENCES gam_networks(network_code),
+    advertiser_id INTEGER NOT NULL REFERENCES gam_companies(company_id),
+    display_name TEXT NOT NULL,
+    creative_type TEXT NOT NULL DEFAULT 'THIRD_PARTY',
+    width INTEGER,
+    height INTEGER,
+    preview_url TEXT,
+    delivery_status TEXT DEFAULT 'ACTIVE',
+    update_time TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS gam_reports (
+    report_id INTEGER PRIMARY KEY,
+    network_code TEXT NOT NULL REFERENCES gam_networks(network_code),
+    display_name TEXT NOT NULL,
+    report_type TEXT DEFAULT 'HISTORICAL',
+    status TEXT DEFAULT 'COMPLETED',
+    start_date TEXT,
+    end_date TEXT,
+    update_time TEXT NOT NULL
+);
 """
 
 
@@ -2450,3 +2565,184 @@ def _seed_thetradedesk(cur, now):
                  random.randint(0, 50000),
                  random.choice([True, False]),
                  now))
+
+
+def _seed_gam(cur, now):
+    """Seed Google Ad Manager (GAM) mock data."""
+    cur.execute("SELECT COUNT(*) FROM gam_networks")
+    if cur.fetchone()["count"] > 0:
+        return
+
+    # --- Networks ---
+    networks = [
+        ("12345678", "Acme Publisher Network", 12345678, "ACME-PUB", "America/New_York", "USD"),
+        ("87654321", "TechNova Media Network", 87654321, "TN-MEDIA", "America/Los_Angeles", "USD"),
+    ]
+    for net_code, name, net_id, prop_code, tz, currency in networks:
+        cur.execute(
+            "INSERT INTO gam_networks VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
+            (net_code, name, net_id, prop_code, tz, currency, 1, now))
+
+    # --- Companies ---
+    company_counter = 5000001
+    company_data = [
+        ("Acme Widgets Advertising", "ADVERTISER", "acme-adv-001", "ads@acme.com"),
+        ("TechNova Performance", "ADVERTISER", "tn-adv-001", "perf@technova.com"),
+        ("GreenLeaf Direct", "ADVERTISER", "gl-adv-001", "media@greenleaf.com"),
+        ("Sunset Travel Marketing", "ADVERTISER", "st-adv-001", "ads@sunsettravel.com"),
+        ("Horizon Agency Group", "AGENCY", "horizon-001", "bookings@horizon.com"),
+        ("MediaCorp Partners", "AGENCY", "mcorp-001", "ops@mediacorp.com"),
+    ]
+    company_ids = []
+    for display_name, comp_type, ext_id, email in company_data:
+        cid = company_counter
+        company_counter += 1
+        company_ids.append(cid)
+        net_code = "12345678" if cid % 2 == 1 else "87654321"
+        cur.execute(
+            "INSERT INTO gam_companies VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            (cid, net_code, display_name, comp_type, ext_id,
+             "123 Ad Street, New York, NY 10001", email,
+             f"Synthetic {comp_type.lower()}", "ACTIVE", now))
+
+    # --- Orders ---
+    order_counter = 6000001
+    order_statuses = ["APPROVED", "DRAFT", "APPROVED", "PENDING_APPROVAL", "APPROVED"]
+    advertiser_ids = [c for c in company_ids[:4]]  # first 4 are advertisers
+    order_ids = []
+    for i in range(10):
+        oid = order_counter
+        order_counter += 1
+        order_ids.append(oid)
+        adv_id = advertiser_ids[i % len(advertiser_ids)]
+        # Determine network_code from advertiser
+        net_code = "12345678" if adv_id % 2 == 1 else "87654321"
+        cur.execute(
+            "INSERT INTO gam_orders VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            (oid, net_code,
+             f"Order {i+1} - {'Direct' if i % 2 == 0 else 'Programmatic'} Deal",
+             adv_id,
+             "trafficker@publisher.com",
+             "sales@publisher.com",
+             order_statuses[i % len(order_statuses)],
+             _past_date(60 - i * 5) + "T00:00:00Z",
+             _future_date(30 + i * 10) + "T23:59:59Z",
+             False, "USD",
+             90000 + i, f"PO-{2000+i}",
+             f"Mock order for testing GAM integration",
+             False, now))
+
+    # --- Line Items ---
+    li_counter = 7000001
+    li_types = ["STANDARD", "SPONSORSHIP", "NETWORK", "HOUSE", "PRICE_PRIORITY"]
+    cost_types = ["CPM", "CPC", "CPD", "CPA"]
+    goal_types = ["LIFETIME", "DAILY", "LIFETIME", "NONE"]
+    for oid in order_ids:
+        # Get network_code for this order
+        row = cur.execute("SELECT network_code FROM gam_orders WHERE order_id = %s", (oid,))
+        net_code_row = cur.fetchone()
+        net_code = net_code_row["network_code"]
+        for j in range(random.randint(2, 5)):
+            lid = li_counter
+            li_counter += 1
+            li_type = li_types[j % len(li_types)]
+            cost_type = cost_types[j % len(cost_types)]
+            goal_type = goal_types[j % len(goal_types)]
+            impressions_goal = random.randint(100000, 5000000)
+            delivered = random.randint(0, impressions_goal)
+            clicks = random.randint(0, int(delivered * 0.03))
+            cur.execute(
+                "INSERT INTO gam_line_items VALUES "
+                "(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                (lid, net_code, oid,
+                 f"Line Item {j+1} - {li_type.replace('_', ' ').title()}",
+                 li_type,
+                 random.choice([4, 6, 8, 10, 12, 16]),
+                 random.choice(["DELIVERING", "READY", "PAUSED", "COMPLETED"]),
+                 _past_date(45 - j * 5) + "T00:00:00Z",
+                 _future_date(20 + j * 10) + "T23:59:59Z",
+                 False,
+                 cost_type,
+                 random.randint(500000, 15000000),
+                 "USD", goal_type,
+                 impressions_goal,
+                 delivered, clicks,
+                 random.choice(["EVEN", "WEIGHTED", "SEQUENTIAL"]),
+                 round(random.uniform(0, 15), 2),
+                 now))
+
+    # --- Ad Units ---
+    au_counter = 8000001
+    ad_unit_names = [
+        ("Homepage Leaderboard", "728x90", "HOMEPAGE_LB"),
+        ("Homepage Medium Rectangle", "300x250", "HOMEPAGE_MR"),
+        ("Article Top Banner", "970x250", "ART_TOP"),
+        ("Article Sidebar", "300x600", "ART_SIDE"),
+        ("Video Pre-roll", "640x480", "VID_PRE"),
+        ("Mobile Interstitial", "320x480", "MOB_INT"),
+        ("Footer Banner", "728x90", "FOOTER_BN"),
+        ("Native In-Feed", "1x1", "NATIVE_IF"),
+    ]
+    au_ids = []
+    for name, size, code in ad_unit_names:
+        auid = au_counter
+        au_counter += 1
+        au_ids.append(auid)
+        net_code = "12345678" if auid % 2 == 1 else "87654321"
+        cur.execute(
+            "INSERT INTO gam_ad_units VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            (auid, net_code, name, code, None,
+             "ACTIVE", size, "BLANK", random.choice([True, False]), now))
+
+    # --- Placements ---
+    pl_counter = 9000001
+    placement_data = [
+        ("Run of Site", "All ad units across the site"),
+        ("Homepage Package", "Homepage leaderboard and medium rectangle"),
+        ("Article Pages", "All article page ad units"),
+        ("Video Package", "Pre-roll and mid-roll video units"),
+        ("Mobile Only", "Mobile interstitial and mobile banners"),
+    ]
+    for name, desc in placement_data:
+        pid = pl_counter
+        pl_counter += 1
+        net_code = "12345678" if pid % 2 == 1 else "87654321"
+        targeted = ",".join(str(au_ids[i]) for i in random.sample(range(len(au_ids)), k=min(3, len(au_ids))))
+        cur.execute(
+            "INSERT INTO gam_placements VALUES (%s,%s,%s,%s,%s,%s,%s)",
+            (pid, net_code, name, desc, "ACTIVE", targeted, now))
+
+    # --- Creatives ---
+    cr_counter = 9500001
+    creative_types = ["THIRD_PARTY", "IMAGE", "VIDEO_VAST", "CUSTOM", "NATIVE"]
+    sizes = [(728, 90), (300, 250), (300, 600), (320, 50), (640, 480), (970, 250)]
+    for adv_id in advertiser_ids:
+        net_code = "12345678" if adv_id % 2 == 1 else "87654321"
+        for j in range(4):
+            crid = cr_counter
+            cr_counter += 1
+            ctype = creative_types[j % len(creative_types)]
+            w, h = sizes[(j + adv_id) % len(sizes)]
+            cur.execute(
+                "INSERT INTO gam_creatives VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                (crid, net_code, adv_id,
+                 f"Creative {j+1} - {ctype.replace('_', ' ').title()}",
+                 ctype, w, h,
+                 f"https://preview.mock.local/creative/{crid}",
+                 random.choice(["ACTIVE", "INACTIVE"]),
+                 now))
+
+    # --- Reports ---
+    rpt_counter = 9900001
+    report_types = ["HISTORICAL", "REACH", "AD_SPEED", "REAL_TIME"]
+    for i in range(6):
+        rid = rpt_counter
+        rpt_counter += 1
+        net_code = "12345678" if rid % 2 == 1 else "87654321"
+        cur.execute(
+            "INSERT INTO gam_reports VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
+            (rid, net_code,
+             f"Report {i+1} - {report_types[i % len(report_types)]}",
+             report_types[i % len(report_types)],
+             "COMPLETED",
+             _past_date(30), _past_date(1), now))

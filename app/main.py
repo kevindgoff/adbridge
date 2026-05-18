@@ -28,12 +28,13 @@ tags_metadata = [
     {"name": "/hivestack", "description": "Hivestack OpenRTB 2.5 DOOH API mock endpoints"},
     {"name": "/adswizz", "description": "AdsWizz Domain API v8 mock endpoints"},
     {"name": "/thetradedesk", "description": "The Trade Desk Platform API v3 mock endpoints"},
+    {"name": "/gam", "description": "Google Ad Manager REST API v1 mock endpoints"},
 ]
 
 app = FastAPI(
     title="AdBridge - Local Ad Platform API Mock",
-    description="Mock API layer for local integration testing against Basis, DV360, Triton Metrics, Triton Booking, Hivestack DOOH, AdsWizz, and The Trade Desk platform APIs.",
-    version="0.7.0",
+    description="Mock API layer for local integration testing against Basis, DV360, Triton Metrics, Triton Booking, Hivestack DOOH, AdsWizz, The Trade Desk, and Google Ad Manager platform APIs.",
+    version="0.8.0",
     openapi_tags=tags_metadata,
     swagger_ui_parameters={"docExpansion": "none", "persistAuthorization": True},
     dependencies=_global_deps,
@@ -66,6 +67,10 @@ if _enabled.get("adswizz"):
 if _enabled.get("thetradedesk"):
     from app.routes.thetradedesk import router as ttd_router
     app.include_router(ttd_router, tags=["/thetradedesk"])
+
+if _enabled.get("gam"):
+    from app.routes.gam import router as gam_router
+    app.include_router(gam_router, tags=["/gam"])
 
 
 @app.on_event("startup")
