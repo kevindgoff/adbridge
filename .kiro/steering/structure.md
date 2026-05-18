@@ -13,7 +13,9 @@
 │       ├── triton.py        # /triton endpoints (metrics)
 │       ├── triton_booking.py# /triton-booking endpoints (TAP)
 │       ├── hivestack.py     # /hivestack endpoints (DOOH)
-│       └── adswizz.py       # /adswizz/v8 endpoints
+│       ├── adswizz.py       # /adswizz/v8 endpoints
+│       ├── thetradedesk.py  # /thetradedesk endpoints (TTD v3)
+│       └── gam.py           # /gam/v1 endpoints (Google Ad Manager)
 ├── tests/
 │   ├── test_all_routes.py   # Static analysis: checks psycopg2 patterns across all routes
 │   └── test_basis.py        # Basis-specific placeholder checks
