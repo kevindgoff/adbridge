@@ -459,8 +459,7 @@ def get_advertiser_stats(advertiser_id: int,
     """Retrieve statistics for all campaigns under an advertiser.
 
     Mirrors GET /advertisers/{advertiserId}/stats from the Basis DSP API.
-    Supports by=DAY for daily breakdowns, date range filtering, pagination,
-    and sorting.
+    Returns the advertiser entity with aggregated stats across all campaigns.
     """
     # Verify advertiser exists
     adv_row = _q(conn, "SELECT * FROM bn_advertisers WHERE advertiser_id = %s",
@@ -489,185 +488,53 @@ def get_advertiser_stats(advertiser_id: int,
 
     where = "WHERE " + " AND ".join(conditions)
 
-    if by and by.upper() == "DAY":
-        # Return daily statistics grouped by campaign and date
-        count_sql = (
-            f"SELECT COUNT(*) FROM (SELECT DISTINCT s.campaign_id, s.date "
-            f"FROM bn_campaign_stats s "
-            f"JOIN bn_campaigns c ON s.campaign_id = c.campaign_id "
-            f"{where}) sub"
-        )
-        total_count = _q(conn, count_sql, params).fetchone()["count"]
+    # Aggregate all stats for this advertiser
+    sql = (
+        f"SELECT "
+        f"SUM(s.impressions) as impressionsWon, "
+        f"SUM(s.impressions) as auctionsWon, "
+        f"CAST(SUM(s.impressions) * 1.3 AS INTEGER) as auctionsBid, "
+        f"SUM(s.clicks) as clicks, "
+        f"SUM(s.spend) as auctionsSpend, "
+        f"SUM(s.spend) as totalSpend, "
+        f"0.0 as dataSpend, "
+        f"SUM(s.conversions) as clickThruConversions, "
+        f"0 as viewthruConversions "
+        f"FROM bn_campaign_stats s "
+        f"JOIN bn_campaigns c ON s.campaign_id = c.campaign_id "
+        f"{where}"
+    )
+    row = _q(conn, sql, params).fetchone()
 
-        order_col = sortBy or "date"
-        direction = "ASC" if sortDirection.lower() == "asc" else "DESC"
-        offset = (page - 1) * pageSize
+    imps = row["impressionsWon"] or 0
+    clicks = row["clicks"] or 0
+    spend = row["auctionsSpend"] or 0.0
+    auctions_bid = row["auctionsBid"] or 0
+    auctions_won = row["auctionsWon"] or 0
+    ctc = row["clickThruConversions"] or 0
+    vtc = row["viewthruConversions"] or 0
 
-        sql = (
-            f"SELECT s.campaign_id, c.name as campaign_name, c.status, "
-            f"c.default_bid, c.review_status, s.date, "
-            f"s.impressions as impressionsWon, s.impressions as auctionsWon, "
-            f"CAST(s.impressions * 1.3 AS INTEGER) as auctionsBid, "
-            f"s.clicks, s.spend as auctionsSpend, s.spend as totalSpend, "
-            f"0.0 as dataSpend, s.conversions as clickThruConversions, "
-            f"0 as viewthruConversions, s.ctr as clickthruRate, "
-            f"s.cpm as effectiveCPM, s.cpc as totalEffectiveCPC "
-            f"FROM bn_campaign_stats s "
-            f"JOIN bn_campaigns c ON s.campaign_id = c.campaign_id "
-            f"{where} ORDER BY {order_col} {direction} LIMIT %s OFFSET %s"
-        )
-        rows = _q(conn, sql, params + [pageSize, offset]).fetchall()
-
-        # Group by campaign for daily format
-        campaigns_daily = {}
-        for r in rows:
-            cid = r["campaign_id"]
-            if cid not in campaigns_daily:
-                campaigns_daily[cid] = {
-                    "links": [],
-                    "entity": {
-                        "links": [{"href": f"http://api.sitescout.com/advertisers/{advertiser_id}/campaigns/{cid}", "rel": "self"}],
-                        "campaignId": cid,
-                        "name": r["campaign_name"],
-                        "status": r["status"],
-                        "reviewStatus": r["review_status"],
-                        "defaultBid": r["default_bid"],
-                    },
-                    "statsList": [],
-                    "totals": _empty_stats(),
-                }
-            stats = _build_stats_obj(r)
-            campaigns_daily[cid]["statsList"].append({
-                "date": r["date"].replace("-", ""),
-                "stats": stats,
-            })
-            _accumulate_totals(campaigns_daily[cid]["totals"], stats)
-
-        results = list(campaigns_daily.values())
-        # Compute dateRange
-        from_date = dateFrom or _past_date(0).replace("-", "")
-        to_date = dateTo or _past_date(0).replace("-", "")
-    else:
-        # Aggregate stats per campaign (no daily breakdown)
-        count_sql = (
-            f"SELECT COUNT(*) FROM (SELECT DISTINCT s.campaign_id "
-            f"FROM bn_campaign_stats s "
-            f"JOIN bn_campaigns c ON s.campaign_id = c.campaign_id "
-            f"{where}) sub"
-        )
-        total_count = _q(conn, count_sql, params).fetchone()["count"]
-
-        order_col = sortBy or "impressionsWon"
-        direction = "ASC" if sortDirection.lower() == "asc" else "DESC"
-        offset = (page - 1) * pageSize
-
-        sql = (
-            f"SELECT s.campaign_id, c.name as campaign_name, c.status, "
-            f"c.default_bid, c.review_status, "
-            f"SUM(s.impressions) as impressionsWon, "
-            f"SUM(s.impressions) as auctionsWon, "
-            f"CAST(SUM(s.impressions) * 1.3 AS INTEGER) as auctionsBid, "
-            f"SUM(s.clicks) as clicks, "
-            f"SUM(s.spend) as auctionsSpend, "
-            f"SUM(s.spend) as totalSpend, "
-            f"0.0 as dataSpend, "
-            f"SUM(s.conversions) as clickThruConversions, "
-            f"0 as viewthruConversions "
-            f"FROM bn_campaign_stats s "
-            f"JOIN bn_campaigns c ON s.campaign_id = c.campaign_id "
-            f"{where} GROUP BY s.campaign_id, c.name, c.status, c.default_bid, c.review_status "
-            f"ORDER BY {order_col} {direction} LIMIT %s OFFSET %s"
-        )
-        rows = _q(conn, sql, params + [pageSize, offset]).fetchall()
-
-        results = []
-        for r in rows:
-            row = dict(r)
-            imps = row["impressionsWon"] or 0
-            clicks = row["clicks"] or 0
-            spend = row["auctionsSpend"] or 0
-            ctc = row["clickThruConversions"] or 0
-            vtc = row["viewthruConversions"] or 0
-
-            stats = {
-                "auctionsBid": row["auctionsBid"],
-                "auctionsWon": row["auctionsWon"],
-                "impressionsWon": imps,
-                "clicks": clicks,
-                "clickThruConversions": ctc,
-                "viewthruConversions": vtc,
-                "totalConversions": ctc + vtc,
-                "auctionsSpend": round(spend, 2),
-                "dataSpend": 0.0,
-                "totalSpend": round(spend, 2),
-                "effectiveCPM": round((spend / imps) * 1000, 6) if imps else 0.0,
-                "totalEffectiveCPM": round((spend / imps) * 1000, 6) if imps else 0.0,
-                "totalEffectiveCPC": round(spend / clicks, 6) if clicks else 0.0,
-                "clickthruRate": round(clicks / imps, 6) if imps else 0.0,
-                "winRate": round(row["auctionsWon"] / row["auctionsBid"], 6) if row["auctionsBid"] else 0.0,
-                "revenue": 0.0,
-            }
-            results.append({
-                "entity": {
-                    "links": [{"href": f"http://api.sitescout.com/advertisers/{advertiser_id}/campaigns/{row['campaign_id']}", "rel": "self"}],
-                    "campaignId": row["campaign_id"],
-                    "name": row["campaign_name"],
-                    "status": row["status"],
-                    "reviewStatus": row["review_status"],
-                    "defaultBid": row["default_bid"],
-                },
-                "stats": stats,
-                "links": [],
-            })
-
-        from_date = dateFrom or _past_date(6).replace("-", "")
-        to_date = dateTo or _past_date(0).replace("-", "")
-
-    # Build the full response envelope
-    response = {
-        "links": [
-            {"href": f"http://api.sitescout.com/advertisers/{advertiser_id}/stats", "rel": "self"},
-        ],
-        "totalCount": total_count,
-        "pagination": {
-            "page": page,
-            "pageSize": pageSize,
+    return {
+        "entity": {
+            "links": [
+                {"href": f"http://api.sitescout.com/advertisers/{advertiser_id}", "rel": "self"}
+            ],
+            "advertiserId": advertiser_id,
+            "companyName": adv_row["company_name"],
+            "email": adv_row["email"],
+            "status": adv_row["status"],
+            "active": adv_row["active"],
         },
-        "sorting": {
-            "sortBy": sortBy or ("date" if by and by.upper() == "DAY" else "impressionsWon"),
-            "sortDirection": sortDirection,
+        "stats": {
+            "auctionsBid": auctions_bid,
+            "auctionsWon": auctions_won,
+            "impressionsWon": imps,
+            "auctionsSpend": round(spend, 2),
+            "dataSpend": 0.0,
+            "totalSpend": round(spend, 2),
+            "revenue": 0.0,
         },
-        "results": results,
-        "dateRange": {
-            "from": from_date.replace("-", ""),
-            "to": to_date.replace("-", ""),
-            "timezone": timezone,
-        },
-        "fromCache": useCache,
     }
-
-    if filter:
-        response["filter"] = filter
-    if status:
-        response["status"] = status
-
-    # Compute totals across all results
-    totals = _empty_stats()
-    for r in results:
-        s = r.get("stats") or r.get("totals", {})
-        _accumulate_totals(totals, s)
-    # Recompute derived fields on totals
-    if totals["impressionsWon"]:
-        totals["effectiveCPM"] = round((totals["auctionsSpend"] / totals["impressionsWon"]) * 1000, 6)
-        totals["totalEffectiveCPM"] = totals["effectiveCPM"]
-        totals["clickthruRate"] = round(totals["clicks"] / totals["impressionsWon"], 6)
-    if totals["clicks"]:
-        totals["totalEffectiveCPC"] = round(totals["totalSpend"] / totals["clicks"], 6)
-    if totals["auctionsBid"]:
-        totals["winRate"] = round(totals["auctionsWon"] / totals["auctionsBid"], 6)
-    response["totals"] = totals
-
-    return response
 
 
 def _empty_stats():
