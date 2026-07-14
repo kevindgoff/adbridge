@@ -513,6 +513,27 @@ def get_advertiser_stats(advertiser_id: int,
     auctions_won = row["auctionsWon"] or 0
     ctc = row["clickThruConversions"] or 0
     vtc = row["viewthruConversions"] or 0
+    total_conversions = ctc + vtc
+    gross_total_spend = round(spend, 2)  # no add-ons in mock
+
+    # Derived metrics
+    win_rate = round(auctions_won / auctions_bid, 6) if auctions_bid else 0.0
+    ctr = round(clicks / imps, 6) if imps else 0.0
+    ecpm = round((spend / imps) * 1000, 6) if imps else 0.0
+    ecpc = round(spend / clicks, 6) if clicks else 0.0
+    ecpa = round(spend / total_conversions, 6) if total_conversions else 0.0
+    click_ecpa = round(spend / ctc, 6) if ctc else 0.0
+    view_ecpa = round(spend / vtc, 6) if vtc else 0.0
+    video_started = int(imps * 0.15)  # mock: ~15% of impressions trigger video
+    video_completed = int(video_started * 0.72)  # mock: 72% completion rate
+    vcr = round(video_completed / video_started, 6) if video_started else 0.0
+    ecpcv = round(spend / video_completed, 6) if video_completed else 0.0
+    eligible_imps = int(imps * 0.85)
+    measured_imps = int(eligible_imps * 0.90)
+    viewable_imps = int(measured_imps * 0.65)
+    measured_rate = round(measured_imps / eligible_imps, 6) if eligible_imps else 0.0
+    viewable_rate = round(viewable_imps / measured_imps, 6) if measured_imps else 0.0
+    viewable_cpm = round((spend / viewable_imps) * 1000, 6) if viewable_imps else 0.0
 
     return {
         "entity": {
@@ -529,10 +550,63 @@ def get_advertiser_stats(advertiser_id: int,
             "auctionsBid": auctions_bid,
             "auctionsWon": auctions_won,
             "impressionsWon": imps,
+            "clicks": clicks,
+            "offerClicks": 0,
+            "clickThruConversions": ctc,
+            "viewthruConversions": vtc,
+            "totalConversions": total_conversions,
+            "videoStarted": video_started,
+            "videoFirstQuartileReached": int(video_started * 0.92),
+            "videoMidpointReached": int(video_started * 0.84),
+            "videoThirdQuartileReached": int(video_started * 0.78),
+            "videoCompleted": video_completed,
+            "videoSkipped": int(video_started * 0.08),
+            "eligibleImpressions": eligible_imps,
+            "measuredImpressions": measured_imps,
+            "viewableImpressions": viewable_imps,
+            "companionImpressions": 0,
+            "companionClicks": 0,
+            "companionConversions": 0,
             "auctionsSpend": round(spend, 2),
             "dataSpend": 0.0,
             "totalSpend": round(spend, 2),
+            "grossTotalSpend": gross_total_spend,
+            "nonBillableSpend": 0.0,
             "revenue": 0.0,
+            "ctcRevenue": 0.0,
+            "vtcRevenue": 0.0,
+            "advertiserSpend": 0.0,
+            "winRate": win_rate,
+            "clickthruRate": ctr,
+            "offerClickthruRate": 0.0,
+            "clickCVR": round(ctc / imps, 6) if imps else 0.0,
+            "viewCVR": round(vtc / imps, 6) if imps else 0.0,
+            "videoCompletionRate": vcr,
+            "videoSkippedRate": round(0.08, 6),
+            "measuredRate": measured_rate,
+            "viewableRate": viewable_rate,
+            "effectiveCPM": ecpm,
+            "mediaEffectiveCPM": ecpm,
+            "totalEffectiveCPM": ecpm,
+            "totalEffectiveCPC": ecpc,
+            "totalEffectiveCPA": ecpa,
+            "totalEffectiveCPCV": ecpcv,
+            "clickEffectiveCPA": click_ecpa,
+            "viewEffectiveCPA": view_ecpa,
+            "dataEffectiveCPM": 0.0,
+            "viewableCPM": viewable_cpm,
+            "grossTotalEffectiveCPC": ecpc,
+            "grossTotalEffectiveCPA": ecpa,
+            "grossTotalEffectiveCPCV": ecpcv,
+            "grossTotalEffectiveCPM": ecpm,
+            "revenuePerMille": 0.0,
+            "returnOnAdSpend": 0.0,
+            "totalCVRM": round(total_conversions / (imps / 1000), 6) if imps else 0.0,
+            "marginOnAdvertiserSpend": 0.0,
+            "effectiveCPAOnAdvertiserSpend": 0.0,
+            "effectiveCPMOnAdvertiserSpend": 0.0,
+            "effectiveCPCOnAdvertiserSpend": 0.0,
+            "effectiveCPCVOnAdvertiserSpend": 0.0,
         },
     }
 
