@@ -29,6 +29,7 @@ tags_metadata = [
     {"name": "/adswizz", "description": "AdsWizz Domain API v8 mock endpoints"},
     {"name": "/thetradedesk", "description": "The Trade Desk Platform API v3 mock endpoints"},
     {"name": "/gam", "description": "Google Ad Manager REST API v1 mock endpoints"},
+    {"name": "/basisnet", "description": "Basis DSP API mock endpoints"},
 ]
 
 app = FastAPI(
@@ -71,6 +72,10 @@ if _enabled.get("thetradedesk"):
 if _enabled.get("gam"):
     from app.routes.gam import router as gam_router
     app.include_router(gam_router, tags=["/gam"])
+
+if _enabled.get("basisnet"):
+    from app.routes.basisnet import router as basisnet_router
+    app.include_router(basisnet_router, tags=["/basisnet"])
 
 
 @app.on_event("startup")

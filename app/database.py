@@ -1202,6 +1202,105 @@ CREATE TABLE IF NOT EXISTS gam_reports (
     end_date TEXT,
     update_time TEXT NOT NULL
 );
+
+-- ==================== Basis DSP (BasisNet) Tables ====================
+
+CREATE TABLE IF NOT EXISTS bn_advertisers (
+    advertiser_id SERIAL PRIMARY KEY,
+    company_name TEXT NOT NULL,
+    currency_code TEXT DEFAULT 'USD',
+    email TEXT,
+    notes TEXT DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'active',
+    active BOOLEAN DEFAULT TRUE,
+    balance REAL DEFAULT 10000.0,
+    max_budget_amount REAL DEFAULT 1000000.0,
+    min_campaign_budget_amount REAL DEFAULT 2.0,
+    active_campaign_limit INTEGER DEFAULT 3000,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS bn_brands (
+    brand_id SERIAL PRIMARY KEY,
+    advertiser_id INTEGER NOT NULL REFERENCES bn_advertisers(advertiser_id),
+    name TEXT NOT NULL,
+    notes TEXT DEFAULT '',
+    landing_page_domain TEXT,
+    archived BOOLEAN DEFAULT FALSE,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS bn_campaign_groups (
+    campaign_group_id SERIAL PRIMARY KEY,
+    advertiser_id INTEGER NOT NULL REFERENCES bn_advertisers(advertiser_id),
+    brand_id INTEGER NOT NULL REFERENCES bn_brands(brand_id),
+    name TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'online',
+    kpi_type TEXT,
+    kpi_value TEXT,
+    budget_amount REAL DEFAULT 0,
+    budget_type TEXT DEFAULT 'none',
+    even_delivery_enabled BOOLEAN DEFAULT TRUE,
+    flight_start TEXT,
+    flight_end TEXT,
+    pacing_setting TEXT DEFAULT 'CAMPAIGN',
+    advertiser_spend_type TEXT,
+    advertiser_spend_rate REAL DEFAULT 0,
+    notes TEXT DEFAULT '',
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS bn_campaigns (
+    campaign_id SERIAL PRIMARY KEY,
+    advertiser_id INTEGER NOT NULL REFERENCES bn_advertisers(advertiser_id),
+    campaign_group_id INTEGER NOT NULL REFERENCES bn_campaign_groups(campaign_group_id),
+    campaign_group_name TEXT,
+    name TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'offline',
+    default_bid REAL DEFAULT 1.0,
+    max_bid REAL,
+    notes TEXT DEFAULT '',
+    budget_amount REAL DEFAULT 25.0,
+    budget_type TEXT DEFAULT 'daily',
+    even_delivery_enabled BOOLEAN DEFAULT TRUE,
+    impression_cap INTEGER,
+    impression_cap_type TEXT DEFAULT 'none',
+    flight_start TEXT,
+    flight_end TEXT,
+    campaign_type TEXT DEFAULT 'advanced',
+    enabled_rop BOOLEAN DEFAULT TRUE,
+    enable_cross_device BOOLEAN DEFAULT FALSE,
+    review_status TEXT DEFAULT 'eligible',
+    created TEXT,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS bn_creatives (
+    creative_id SERIAL PRIMARY KEY,
+    advertiser_id INTEGER NOT NULL REFERENCES bn_advertisers(advertiser_id),
+    brand_id INTEGER NOT NULL REFERENCES bn_brands(brand_id),
+    name TEXT NOT NULL,
+    creative_type TEXT DEFAULT 'display',
+    width INTEGER,
+    height INTEGER,
+    status TEXT DEFAULT 'active',
+    landing_page_url TEXT,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS bn_campaign_stats (
+    id SERIAL PRIMARY KEY,
+    advertiser_id INTEGER NOT NULL REFERENCES bn_advertisers(advertiser_id),
+    campaign_id INTEGER NOT NULL REFERENCES bn_campaigns(campaign_id),
+    date TEXT NOT NULL,
+    impressions INTEGER DEFAULT 0,
+    clicks INTEGER DEFAULT 0,
+    spend REAL DEFAULT 0,
+    conversions INTEGER DEFAULT 0,
+    ctr REAL DEFAULT 0,
+    cpm REAL DEFAULT 0,
+    cpc REAL DEFAULT 0
+);
 """
 
 
@@ -2746,3 +2845,110 @@ def _seed_gam(cur, now):
              report_types[i % len(report_types)],
              "COMPLETED",
              _past_date(30), _past_date(1), now))
+
+
+def _seed_basisnet(cur, now):
+    """Seed Basis DSP (BasisNet) mock data."""
+    cur.execute("SELECT COUNT(*) FROM bn_advertisers")
+    if cur.fetchone()["count"] > 0:
+        return
+
+    # --- Advertisers ---
+    advertisers = [
+        (156329, "Acme Advertising Co.", "USD", "admin@acme-ads.com", "", "active", True, 15045.52, 1000000.0, 2.0, 3000),
+        (156330, "TechNova Media Group", "USD", "media@technova.com", "Performance advertiser", "active", True, 8200.00, 500000.0, 5.0, 2000),
+        (156331, "GreenLeaf Digital", "USD", "digital@greenleaf.com", "", "active", True, 22500.75, 1000000.0, 2.0, 3000),
+    ]
+    for adv_id, name, currency, email, notes, status, active, balance, max_budget, min_budget, camp_limit in advertisers:
+        cur.execute(
+            "INSERT INTO bn_advertisers (advertiser_id, company_name, currency_code, email, notes, status, active, balance, max_budget_amount, min_campaign_budget_amount, active_campaign_limit, created_at) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            (adv_id, name, currency, email, notes, status, active, balance, max_budget, min_budget, camp_limit, now))
+
+    # --- Brands ---
+    brands = [
+        (2, 156329, "SuperCool Scooters", "The fastest, coolest scooters!", "supercoolscooters.com", False),
+        (3, 156329, "ACME Corp", "Foolproof solutions", "acme.com", False),
+        (4, 156330, "TechNova Cloud", "Cloud platform advertising", "cloud.technova.com", False),
+        (5, 156330, "TechNova Mobile", "Mobile app campaigns", "mobile.technova.com", False),
+        (6, 156331, "GreenLeaf Organics", "Organic products brand", "organics.greenleaf.com", False),
+        (7, 156331, "EcoTravel", "Sustainable travel brand", "ecotravel.greenleaf.com", False),
+    ]
+    for brand_id, adv_id, name, notes, domain, archived in brands:
+        cur.execute(
+            "INSERT INTO bn_brands (brand_id, advertiser_id, name, notes, landing_page_domain, archived, created_at) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s)",
+            (brand_id, adv_id, name, notes, domain, archived, now))
+
+    # --- Campaign Groups ---
+    groups = [
+        (30535, 156329, 2, "Summer 2025", "online", "CTR", "2.25", 45000.0, "all_time", True, _past_date(90), _future_date(30), "CAMPAIGN_GROUP", "margin", 0),
+        (30536, 156329, 2, "Holiday Push Q4", "online", "CPA", "4.50", 225.0, "daily", True, _past_date(30), _future_date(60), "CAMPAIGN", None, 0),
+        (30537, 156329, 3, "ACME Brand Awareness", "offline", None, None, 10000.0, "all_time", False, _past_date(60), _future_date(15), "CAMPAIGN_GROUP", "markup", 0.30),
+        (30538, 156330, 4, "Cloud Launch Campaign", "online", "CTR", "1.5", 500.0, "daily", True, _past_date(14), _future_date(45), "CAMPAIGN", None, 0),
+        (30539, 156330, 5, "Mobile App Install", "online", "CPA", "8.00", 30000.0, "all_time", True, _past_date(7), _future_date(90), "CAMPAIGN_GROUP", "margin", 0.15),
+        (30540, 156331, 6, "Organics Spring Sale", "online", None, None, 150.0, "daily", True, _past_date(5), _future_date(25), "CAMPAIGN", None, 0),
+        (30541, 156331, 7, "EcoTravel Summer", "offline", "CPClick", "1.20", 20000.0, "all_time", False, _past_date(45), _future_date(10), "CAMPAIGN_GROUP", "flat_cpm", 1.25),
+    ]
+    for gid, adv_id, brand_id, name, status, kpi_type, kpi_value, budget, btype, even, fstart, fend, pacing, spend_type, spend_rate in groups:
+        cur.execute(
+            "INSERT INTO bn_campaign_groups (campaign_group_id, advertiser_id, brand_id, name, status, kpi_type, kpi_value, budget_amount, budget_type, even_delivery_enabled, flight_start, flight_end, pacing_setting, advertiser_spend_type, advertiser_spend_rate, created_at) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            (gid, adv_id, brand_id, name, status, kpi_type, kpi_value, budget, btype, even, fstart, fend, pacing, spend_type, spend_rate, now))
+
+    # --- Campaigns ---
+    campaigns = [
+        (3017848, 156329, 30535, "Summer 2025", "Scooter Display - West Coast", "online", 1.7, 5.0, "", 25.0, "daily", True, 10000, "all_time", _past_date(85), _future_date(25), "advanced", True, False, "eligible"),
+        (3017849, 156329, 30535, "Summer 2025", "Scooter Video - Preroll", "online", 4.0, 10.0, "", 100.0, "daily", True, None, "none", _past_date(85), _future_date(25), "advanced", True, False, "eligible"),
+        (3017850, 156329, 30536, "Holiday Push Q4", "Holiday Retargeting", "offline", 2.5, 8.0, "Retargeting campaign", 50.0, "daily", True, 5000, "daily", _past_date(25), _future_date(55), "advanced", False, True, "eligible"),
+        (3017851, 156329, 30537, "ACME Brand Awareness", "ACME CTV Awareness", "offline", 8.0, 15.0, "", 500.0, "all_time", False, None, "none", _past_date(55), _future_date(10), "advanced", True, False, "eligible"),
+        (3017852, 156330, 30538, "Cloud Launch Campaign", "Cloud Platform - Search", "online", 3.0, 7.0, "", 200.0, "daily", True, None, "none", _past_date(10), _future_date(40), "advanced", True, False, "eligible"),
+        (3017853, 156330, 30538, "Cloud Launch Campaign", "Cloud Platform - Display", "online", 1.5, 4.0, "", 150.0, "daily", True, 20000, "all_time", _past_date(10), _future_date(40), "advanced", True, False, "eligible"),
+        (3017854, 156330, 30539, "Mobile App Install", "Mobile Install - Android", "online", 5.0, 12.0, "Android only", 300.0, "all_time", True, None, "none", _past_date(5), _future_date(85), "advanced", False, True, "eligible"),
+        (3017855, 156330, 30539, "Mobile App Install", "Mobile Install - iOS", "online", 6.0, 14.0, "iOS only", 350.0, "all_time", True, None, "none", _past_date(5), _future_date(85), "advanced", False, True, "eligible"),
+        (3017856, 156331, 30540, "Organics Spring Sale", "Organics - Native Ads", "online", 2.0, 6.0, "", 100.0, "daily", True, 8000, "daily", _past_date(3), _future_date(22), "advanced", True, False, "eligible"),
+        (3017857, 156331, 30541, "EcoTravel Summer", "EcoTravel DOOH", "offline", 10.0, 25.0, "DOOH pilot", 1000.0, "all_time", False, None, "none", _past_date(40), _future_date(5), "dooh", True, False, "eligible"),
+    ]
+    for cid, adv_id, gid, gname, name, status, dbid, maxbid, notes, budget, btype, even, impcap, impcaptype, fstart, fend, ctype, rop, xdev, review in campaigns:
+        created = _past_date(random.randint(1, 90)) + " " + f"{random.randint(8,17):02d}:{random.randint(0,59):02d}:{random.randint(0,59):02d}"
+        cur.execute(
+            "INSERT INTO bn_campaigns (campaign_id, advertiser_id, campaign_group_id, campaign_group_name, name, status, default_bid, max_bid, notes, budget_amount, budget_type, even_delivery_enabled, impression_cap, impression_cap_type, flight_start, flight_end, campaign_type, enabled_rop, enable_cross_device, review_status, created, created_at) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            (cid, adv_id, gid, gname, name, status, dbid, maxbid, notes, budget, btype, even, impcap, impcaptype, fstart, fend, ctype, rop, xdev, review, created, now))
+
+    # --- Creatives ---
+    creative_counter = 4001
+    creative_data = [
+        (156329, 2, "Scooter Banner 300x250", "display", 300, 250, "active", "https://supercoolscooters.com/summer"),
+        (156329, 2, "Scooter Banner 728x90", "display", 728, 90, "active", "https://supercoolscooters.com/summer"),
+        (156329, 2, "Scooter Video 15s", "video", 1920, 1080, "active", "https://supercoolscooters.com/video"),
+        (156329, 3, "ACME CTV Spot 30s", "video", 1920, 1080, "active", "https://acme.com/brand"),
+        (156330, 4, "Cloud Banner 320x50", "display", 320, 50, "active", "https://cloud.technova.com/signup"),
+        (156330, 4, "Cloud Native Ad", "native", None, None, "active", "https://cloud.technova.com/features"),
+        (156330, 5, "Mobile Install Ad", "display", 320, 480, "active", "https://mobile.technova.com/install"),
+        (156331, 6, "Organics Native Card", "native", None, None, "active", "https://organics.greenleaf.com/sale"),
+        (156331, 7, "EcoTravel DOOH 1920x1080", "video", 1920, 1080, "active", "https://ecotravel.greenleaf.com"),
+    ]
+    for adv_id, brand_id, name, ctype, w, h, status, url in creative_data:
+        cur.execute(
+            "INSERT INTO bn_creatives (creative_id, advertiser_id, brand_id, name, creative_type, width, height, status, landing_page_url, created_at) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            (creative_counter, adv_id, brand_id, name, ctype, w, h, status, url, now))
+        creative_counter += 1
+
+    # --- Campaign Stats (sample daily stats for the past 7 days) ---
+    campaign_ids = [c[0] for c in campaigns]
+    for cid in campaign_ids:
+        adv_id = next(c[1] for c in campaigns if c[0] == cid)
+        for days_ago in range(7):
+            imps = random.randint(5000, 50000)
+            clicks = random.randint(50, 500)
+            spend = round(random.uniform(10.0, 200.0), 2)
+            convs = random.randint(0, 20)
+            ctr = round(clicks / imps, 6) if imps else 0
+            cpm = round((spend / imps) * 1000, 4) if imps else 0
+            cpc = round(spend / clicks, 4) if clicks else 0
+            cur.execute(
+                "INSERT INTO bn_campaign_stats (advertiser_id, campaign_id, date, impressions, clicks, spend, conversions, ctr, cpm, cpc) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                (adv_id, cid, _past_date(days_ago), imps, clicks, spend, convs, ctr, cpm, cpc))
