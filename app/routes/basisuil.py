@@ -16,7 +16,6 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from typing import Optional
 
 from app.database import get_db
-from app.helpers import single_response
 
 from datetime import datetime, timedelta
 
@@ -72,10 +71,151 @@ def _list_response(results, total_count):
     }
 
 
-def _single_with_links(data):
-    """Build a single-item response with links array."""
-    data["links"] = []
-    return data
+# ═══════════════════════ Response Shaping Helpers ═════════════════════════════
+
+def _shape_advertiser(row):
+    """Shape a DB row into the documented Advertiser response."""
+    return {
+        "links": [{"href": f"http://api.sitescout.com/advertisers/{row['advertiser_id']}", "rel": "self"}],
+        "advertiserId": row["advertiser_id"],
+        "companyName": row["company_name"],
+        "currencyCode": row["currency_code"],
+        "email": row["email"],
+        "notes": row["notes"] or "",
+        "status": row["status"],
+        "active": bool(row["active"]),
+        "advertiserProperty": {
+            "maxBudgetAmount": row["max_budget_amount"],
+            "minCampaignBudgetAmount": row["min_campaign_budget_amount"],
+            "activeCampaignLimit": row["active_campaign_limit"],
+        },
+    }
+
+
+def _shape_brand(row):
+    """Shape a DB row into the documented Brand response."""
+    return {
+        "links": [{"href": "...", "rel": "self"}],
+        "brandId": row["brand_id"],
+        "name": row["name"],
+        "notes": row["notes"] or "",
+        "archived": bool(row["archived"]),
+    }
+
+
+def _shape_campaign_group(row):
+    """Shape a DB row into the documented Campaign Group response."""
+    return {
+        "links": [{"href": "...", "rel": "self"}],
+        "campaignGroupId": row["campaign_group_id"],
+        "name": row["name"],
+        "status": row["status"],
+        "kpiType": row.get("kpi_type"),
+        "kpiValue": row.get("kpi_value"),
+        "budget": {
+            "links": [],
+            "amount": row.get("budget_amount", 0),
+            "type": row.get("budget_type", "none"),
+            "evenDeliveryEnabled": bool(row.get("even_delivery_enabled", True)),
+            "schedule": {
+                "flightDates": {
+                    "from": row.get("flight_start"),
+                    "to": row.get("flight_end"),
+                }
+            },
+        },
+        "pacingSetting": row.get("pacing_setting", "CAMPAIGN"),
+        "brandId": row.get("brand_id"),
+        "advertiserSpendType": row.get("advertiser_spend_type"),
+        "advertiserSpendRate": row.get("advertiser_spend_rate", 0),
+    }
+
+
+def _shape_campaign(row, include_schedule=False):
+    """Shape a DB row into the documented Campaign response."""
+    budget = {
+        "links": [],
+        "amount": row.get("budget_amount", 0),
+        "type": row.get("budget_type", "daily"),
+        "evenDeliveryEnabled": bool(row.get("even_delivery_enabled", True)),
+        "impressionCap": row.get("impression_cap"),
+        "impressionCapType": row.get("impression_cap_type", "none"),
+    }
+    if include_schedule:
+        budget["schedule"] = {
+            "flightDates": {
+                "from": row.get("flight_start"),
+                "to": row.get("flight_end"),
+            }
+        }
+
+    result = {
+        "links": [{"href": "...", "rel": "self"}],
+        "campaignId": row["campaign_id"],
+        "name": row["name"],
+        "campaignGroupId": row.get("campaign_group_id"),
+        "campaignGroupName": row.get("campaign_group_name"),
+        "status": row["status"],
+        "defaultBid": row.get("default_bid"),
+        "maxBid": row.get("max_bid"),
+        "notes": row.get("notes", ""),
+        "budget": budget,
+        "created": row.get("created"),
+        "reviewStatus": row.get("review_status", "eligible"),
+        "campaignType": row.get("campaign_type", "advanced"),
+        "enabledROP": bool(row.get("enabled_rop", True)),
+        "enableCrossDevice": bool(row.get("enable_cross_device", False)),
+        "isRelativeDayParting": False,
+        "pacingSetting": "CAMPAIGN",
+        "excludeAnonymousDomains": True,
+    }
+    if include_schedule:
+        result["flightDates"] = {
+            "from": row.get("flight_start"),
+            "to": row.get("flight_end"),
+        }
+    return result
+
+
+def _shape_creative(row):
+    """Shape a DB row into the documented Creative response."""
+    ctype = row.get("creative_type", "banner")
+    width = row.get("width") or 0
+    height = row.get("height") or 0
+    # Determine orientation
+    if width > height:
+        orientation = "landscape"
+    elif height > width:
+        orientation = "portrait"
+    else:
+        orientation = "square"
+    # Determine format from type
+    format_map = {"display": "image", "video": "video", "native": "native", "audio": "audio"}
+    fmt = format_map.get(ctype, "image")
+
+    return {
+        "links": [{"href": "...", "rel": "self"}],
+        "creativeId": row["creative_id"],
+        "label": row["name"],
+        "width": width,
+        "height": height,
+        "type": "banner" if ctype == "display" else ctype,
+        "reviewStatus": "eligible",
+        "previewUrl": f"http://preview.sitescout.ad/preview?ad={row['creative_id']}&adOnly=1",
+        "sslEnabled": True,
+        "assetUrl": f"https://cdn01.basis.net/mock/{row['creative_id']}.{'mp4' if ctype == 'video' else 'png'}",
+        "format": fmt,
+        "status": row.get("status", "online"),
+        "clickUrl": row.get("landing_page_url", ""),
+        "landingPageUrl": row.get("landing_page_url", ""),
+        "landingPageDomain": (row.get("landing_page_url") or "").replace("https://", "").replace("http://", "").split("/")[0],
+        "lastModified": row.get("created_at", "").replace("-", "").replace("T", " ").replace("Z", "")[:17],
+        "created": row.get("created_at", "").replace("-", "").replace("T", " ").replace("Z", "")[:17],
+        "brandId": row.get("brand_id"),
+        "orientation": orientation,
+        "enableClickUrlAuctionIdDecoration": True,
+        "linkedCampaignCount": 0,
+    }
 
 
 # ══════════════════════════════ Auth ══════════════════════════════════════════
@@ -85,7 +225,7 @@ def generate_token():
     """Generate a mock OAuth2 access token (Client Credentials grant)."""
     return {
         "scope": "STATS AUDIENCES CONTROL",
-        "access_token": "mock-basisnet-token-7ebe55b54ee12a8ee07329f1cefd6de6",
+        "access_token": "mock-basisuil-token-7ebe55b54ee12a8ee07329f1cefd6de6",
         "token_type": "bearer",
         "expires_in": 3600,
     }
@@ -100,7 +240,7 @@ def get_advertiser(advertiser_id: int, conn=Depends(get_db)):
              (advertiser_id,)).fetchone()
     if not row:
         raise HTTPException(404, "Advertiser cannot be found.")
-    return _single_with_links(dict(row))
+    return _shape_advertiser(row)
 
 
 @router.get("/advertisers/{advertiser_id}/balance")
@@ -152,7 +292,7 @@ def list_brands(advertiser_id: int,
         where_clause=where, where_params=tuple(params),
         id_column="brand_id"
     )
-    return _list_response(results, total)
+    return _list_response([_shape_brand(r) for r in results], total)
 
 
 @router.get("/advertisers/{advertiser_id}/brands/{brand_id}")
@@ -163,7 +303,7 @@ def get_brand(advertiser_id: int, brand_id: int, conn=Depends(get_db)):
              (brand_id, advertiser_id)).fetchone()
     if not row:
         raise HTTPException(404, "Brand cannot be found.")
-    return _single_with_links(dict(row))
+    return _shape_brand(row)
 
 
 @router.post("/advertisers/{advertiser_id}/brands")
@@ -171,7 +311,6 @@ def create_brand(advertiser_id: int, body: dict, conn=Depends(get_db)):
     """Create a new brand (mock — returns synthetic data)."""
     name = body.get("name", "New Brand")
     notes = body.get("notes", "")
-    # Get the next brand_id
     row = _q(conn, "SELECT COALESCE(MAX(brand_id), 0) + 1 as next_id FROM bn_brands").fetchone()
     next_id = row["next_id"]
     from app.database import _now
@@ -180,12 +319,13 @@ def create_brand(advertiser_id: int, body: dict, conn=Depends(get_db)):
        "VALUES (%s, %s, %s, %s, %s, %s)",
        (next_id, advertiser_id, name, notes, False, _now()))
     conn.commit()
-    return _single_with_links({
+    return {
+        "links": [{"href": "...", "rel": "self"}],
         "brandId": next_id,
         "name": name,
         "notes": notes,
         "archived": False,
-    })
+    }
 
 
 # ══════════════════════════════ Campaign Groups ═══════════════════════════════
@@ -215,21 +355,7 @@ def list_campaign_groups(advertiser_id: int, brand_id: int,
         where_clause=where, where_params=tuple(params),
         id_column="campaign_group_id"
     )
-    # Shape results to match Basis DSP response format
-    for r in results:
-        r["links"] = []
-        r["budget"] = {
-            "amount": r.pop("budget_amount", 0),
-            "type": r.pop("budget_type", "none"),
-            "evenDeliveryEnabled": bool(r.pop("even_delivery_enabled", True)),
-            "schedule": {
-                "flightDates": {
-                    "from": r.pop("flight_start", None),
-                    "to": r.pop("flight_end", None),
-                }
-            }
-        }
-    return _list_response(results, total)
+    return _list_response([_shape_campaign_group(r) for r in results], total)
 
 
 @router.get("/advertisers/{advertiser_id}/brands/{brand_id}/campaignGroups/{group_id}")
@@ -241,20 +367,7 @@ def get_campaign_group(advertiser_id: int, brand_id: int, group_id: int,
              (group_id, brand_id)).fetchone()
     if not row:
         raise HTTPException(404, "Campaign group cannot be found.")
-    data = dict(row)
-    data["links"] = []
-    data["budget"] = {
-        "amount": data.pop("budget_amount", 0),
-        "type": data.pop("budget_type", "none"),
-        "evenDeliveryEnabled": bool(data.pop("even_delivery_enabled", True)),
-        "schedule": {
-            "flightDates": {
-                "from": data.pop("flight_start", None),
-                "to": data.pop("flight_end", None),
-            }
-        }
-    }
-    return data
+    return _shape_campaign_group(row)
 
 
 @router.get("/advertisers/{advertiser_id}/campaignGroups")
@@ -273,20 +386,7 @@ def list_all_campaign_groups(advertiser_id: int,
         where_clause=where, where_params=params,
         id_column="campaign_group_id"
     )
-    for r in results:
-        r["links"] = []
-        r["budget"] = {
-            "amount": r.pop("budget_amount", 0),
-            "type": r.pop("budget_type", "none"),
-            "evenDeliveryEnabled": bool(r.pop("even_delivery_enabled", True)),
-            "schedule": {
-                "flightDates": {
-                    "from": r.pop("flight_start", None),
-                    "to": r.pop("flight_end", None),
-                }
-            }
-        }
-    return _list_response(results, total)
+    return _list_response([_shape_campaign_group(r) for r in results], total)
 
 
 # ══════════════════════════════ Campaigns ═════════════════════════════════════
@@ -323,16 +423,7 @@ def list_campaigns(advertiser_id: int,
         where_clause=where, where_params=tuple(params),
         id_column="campaign_id"
     )
-    for r in results:
-        r["links"] = []
-        r["budget"] = {
-            "amount": r.pop("budget_amount", 0),
-            "type": r.pop("budget_type", "daily"),
-            "evenDeliveryEnabled": bool(r.pop("even_delivery_enabled", True)),
-            "impressionCap": r.pop("impression_cap", None),
-            "impressionCapType": r.pop("impression_cap_type", "none"),
-        }
-    return _list_response(results, total)
+    return _list_response([_shape_campaign(r) for r in results], total)
 
 
 @router.get("/advertisers/{advertiser_id}/campaigns/{campaign_id}")
@@ -343,23 +434,7 @@ def get_campaign(advertiser_id: int, campaign_id: int, conn=Depends(get_db)):
              (campaign_id, advertiser_id)).fetchone()
     if not row:
         raise HTTPException(404, "Campaign cannot be found.")
-    data = dict(row)
-    data["links"] = []
-    data["budget"] = {
-        "links": [],
-        "amount": data.pop("budget_amount", 0),
-        "type": data.pop("budget_type", "daily"),
-        "evenDeliveryEnabled": bool(data.pop("even_delivery_enabled", True)),
-        "impressionCap": data.pop("impression_cap", None),
-        "impressionCapType": data.pop("impression_cap_type", "none"),
-        "schedule": {
-            "flightDates": {
-                "from": data.pop("flight_start", None),
-                "to": data.pop("flight_end", None),
-            }
-        }
-    }
-    return data
+    return _shape_campaign(row, include_schedule=True)
 
 
 @router.get("/advertisers/{advertiser_id}/brands/{brand_id}/campaignGroups/{group_id}/campaigns")
@@ -387,16 +462,7 @@ def list_campaigns_in_group(advertiser_id: int, brand_id: int, group_id: int,
         where_clause=where, where_params=tuple(params),
         id_column="campaign_id"
     )
-    for r in results:
-        r["links"] = []
-        r["budget"] = {
-            "amount": r.pop("budget_amount", 0),
-            "type": r.pop("budget_type", "daily"),
-            "evenDeliveryEnabled": bool(r.pop("even_delivery_enabled", True)),
-            "impressionCap": r.pop("impression_cap", None),
-            "impressionCapType": r.pop("impression_cap_type", "none"),
-        }
-    return _list_response(results, total)
+    return _list_response([_shape_campaign(r) for r in results], total)
 
 
 @router.patch("/advertisers/{advertiser_id}/campaigns/{campaign_id}")
@@ -409,7 +475,6 @@ def update_campaign(advertiser_id: int, campaign_id: int, body: dict,
     if not row:
         raise HTTPException(404, "Campaign cannot be found.")
 
-    allowed = {"name", "status", "defaultBid", "maxBid", "notes"}
     updates = []
     params = []
     field_map = {"name": "name", "status": "status", "defaultBid": "default_bid",
@@ -424,19 +489,9 @@ def update_campaign(advertiser_id: int, campaign_id: int, body: dict,
            tuple(params))
         conn.commit()
 
-    # Return updated campaign
     updated = _q(conn, "SELECT * FROM bn_campaigns WHERE campaign_id = %s",
                  (campaign_id,)).fetchone()
-    data = dict(updated)
-    data["links"] = []
-    data["budget"] = {
-        "amount": data.pop("budget_amount", 0),
-        "type": data.pop("budget_type", "daily"),
-        "evenDeliveryEnabled": bool(data.pop("even_delivery_enabled", True)),
-        "impressionCap": data.pop("impression_cap", None),
-        "impressionCapType": data.pop("impression_cap_type", "none"),
-    }
-    return data
+    return _shape_campaign(updated)
 
 
 # ══════════════════════════════ Statistics ════════════════════════════════════
@@ -461,13 +516,11 @@ def get_advertiser_stats(advertiser_id: int,
     Mirrors GET /advertisers/{advertiserId}/stats from the Basis DSP API.
     Returns the advertiser entity with aggregated stats across all campaigns.
     """
-    # Verify advertiser exists
     adv_row = _q(conn, "SELECT * FROM bn_advertisers WHERE advertiser_id = %s",
                  (advertiser_id,)).fetchone()
     if not adv_row:
         raise HTTPException(404, "Advertiser cannot be found.")
 
-    # Build stat query conditions
     conditions = ["s.advertiser_id = %s"]
     params = [advertiser_id]
 
@@ -488,7 +541,6 @@ def get_advertiser_stats(advertiser_id: int,
 
     where = "WHERE " + " AND ".join(conditions)
 
-    # Aggregate all stats for this advertiser
     sql = (
         f"SELECT "
         f"SUM(s.impressions) as impressionsWon, "
@@ -514,7 +566,7 @@ def get_advertiser_stats(advertiser_id: int,
     ctc = row["clickThruConversions"] or 0
     vtc = row["viewthruConversions"] or 0
     total_conversions = ctc + vtc
-    gross_total_spend = round(spend, 2)  # no add-ons in mock
+    gross_total_spend = round(spend, 2)
 
     # Derived metrics
     win_rate = round(auctions_won / auctions_bid, 6) if auctions_bid else 0.0
@@ -524,8 +576,8 @@ def get_advertiser_stats(advertiser_id: int,
     ecpa = round(spend / total_conversions, 6) if total_conversions else 0.0
     click_ecpa = round(spend / ctc, 6) if ctc else 0.0
     view_ecpa = round(spend / vtc, 6) if vtc else 0.0
-    video_started = int(imps * 0.15)  # mock: ~15% of impressions trigger video
-    video_completed = int(video_started * 0.72)  # mock: 72% completion rate
+    video_started = int(imps * 0.15)
+    video_completed = int(video_started * 0.72)
     vcr = round(video_completed / video_started, 6) if video_started else 0.0
     ecpcv = round(spend / video_completed, 6) if video_completed else 0.0
     eligible_imps = int(imps * 0.85)
@@ -544,7 +596,7 @@ def get_advertiser_stats(advertiser_id: int,
             "companyName": adv_row["company_name"],
             "email": adv_row["email"],
             "status": adv_row["status"],
-            "active": adv_row["active"],
+            "active": bool(adv_row["active"]),
         },
         "stats": {
             "auctionsBid": auctions_bid,
@@ -611,64 +663,6 @@ def get_advertiser_stats(advertiser_id: int,
     }
 
 
-def _empty_stats():
-    """Return a zeroed-out stats object."""
-    return {
-        "auctionsBid": 0,
-        "auctionsWon": 0,
-        "impressionsWon": 0,
-        "clicks": 0,
-        "clickThruConversions": 0,
-        "viewthruConversions": 0,
-        "totalConversions": 0,
-        "auctionsSpend": 0.0,
-        "dataSpend": 0.0,
-        "totalSpend": 0.0,
-        "effectiveCPM": 0.0,
-        "totalEffectiveCPM": 0.0,
-        "totalEffectiveCPC": 0.0,
-        "clickthruRate": 0.0,
-        "winRate": 0.0,
-        "revenue": 0.0,
-    }
-
-
-def _build_stats_obj(row):
-    """Build a stats object from a single row."""
-    imps = row["impressionsWon"] or 0
-    clicks = row["clicks"] or 0
-    spend = row["auctionsSpend"] or 0
-    ctc = row.get("clickThruConversions", 0) or 0
-    vtc = row.get("viewthruConversions", 0) or 0
-    return {
-        "auctionsBid": row["auctionsBid"],
-        "auctionsWon": row["auctionsWon"],
-        "impressionsWon": imps,
-        "clicks": clicks,
-        "clickThruConversions": ctc,
-        "viewthruConversions": vtc,
-        "totalConversions": ctc + vtc,
-        "auctionsSpend": round(spend, 2),
-        "dataSpend": 0.0,
-        "totalSpend": round(spend, 2),
-        "effectiveCPM": round((spend / imps) * 1000, 6) if imps else 0.0,
-        "totalEffectiveCPM": round((spend / imps) * 1000, 6) if imps else 0.0,
-        "totalEffectiveCPC": round(spend / clicks, 6) if clicks else 0.0,
-        "clickthruRate": round(clicks / imps, 6) if imps else 0.0,
-        "winRate": round(row["auctionsWon"] / row["auctionsBid"], 6) if row["auctionsBid"] else 0.0,
-        "revenue": 0.0,
-    }
-
-
-def _accumulate_totals(totals, stats):
-    """Add stats values into a running totals dict."""
-    for key in ("auctionsBid", "auctionsWon", "impressionsWon", "clicks",
-                "clickThruConversions", "viewthruConversions", "totalConversions"):
-        totals[key] += stats.get(key, 0) or 0
-    for key in ("auctionsSpend", "dataSpend", "totalSpend", "revenue"):
-        totals[key] += stats.get(key, 0.0) or 0.0
-
-
 # ══════════════════════════════ Creatives ═════════════════════════════════════
 
 @router.get("/advertisers/{advertiser_id}/brands/{brand_id}/creatives")
@@ -685,9 +679,7 @@ def list_creatives(advertiser_id: int, brand_id: int,
         where_clause="brand_id = %s", where_params=(brand_id,),
         id_column="creative_id"
     )
-    for r in results:
-        r["links"] = []
-    return _list_response(results, total)
+    return _list_response([_shape_creative(r) for r in results], total)
 
 
 @router.get("/advertisers/{advertiser_id}/brands/{brand_id}/creatives/{creative_id}")
@@ -699,6 +691,4 @@ def get_creative(advertiser_id: int, brand_id: int, creative_id: int,
              (creative_id, brand_id)).fetchone()
     if not row:
         raise HTTPException(404, "Creative cannot be found.")
-    data = dict(row)
-    data["links"] = []
-    return data
+    return _shape_creative(row)
