@@ -5,11 +5,12 @@
 import re
 
 ROUTE_FILES = [
-    "app/routes/basis.py",
+    "app/routes/basiswodh.py",
     "app/routes/dv360.py",
     "app/routes/triton.py",
     "app/routes/triton_booking.py",
     "app/routes/hivestack.py",
+    "app/routes/basisuil.py",
 ]
 
 

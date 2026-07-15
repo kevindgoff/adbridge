@@ -21,7 +21,7 @@ async def _verify_api_key(key: str = Security(_api_key_header)):
 _global_deps = [Depends(_verify_api_key)]
 
 tags_metadata = [
-    {"name": "/basis", "description": "Basis Technologies API mock endpoints"},
+    {"name": "/basiswodh", "description": "Basis Technologies API mock endpoints"},
     {"name": "/dv360", "description": "Google Display & Video 360 API mock endpoints"},
     {"name": "/triton", "description": "Triton Digital Metrics API mock endpoints"},
     {"name": "/triton-booking", "description": "Triton Digital Booking (TAP) API mock endpoints"},
@@ -29,12 +29,12 @@ tags_metadata = [
     {"name": "/adswizz", "description": "AdsWizz Domain API v8 mock endpoints"},
     {"name": "/thetradedesk", "description": "The Trade Desk Platform API v3 mock endpoints"},
     {"name": "/gam", "description": "Google Ad Manager REST API v1 mock endpoints"},
-    {"name": "/basisnet", "description": "Basis DSP API mock endpoints"},
+    {"name": "/basisuil", "description": "Basis DSP API mock endpoints"},
 ]
 
 app = FastAPI(
     title="AdBridge - Local Ad Platform API Mock",
-    description="Mock API layer for local integration testing against Basis, DV360, Triton Metrics, Triton Booking, Hivestack DOOH, AdsWizz, The Trade Desk, and Google Ad Manager platform APIs.",
+    description="Mock API layer for local integration testing against Basis WODH, Basis UIL (DSP), DV360, Triton Metrics, Triton Booking, Hivestack DOOH, AdsWizz, The Trade Desk, and Google Ad Manager platform APIs.",
     version="0.8.0",
     openapi_tags=tags_metadata,
     swagger_ui_parameters={"docExpansion": "none", "persistAuthorization": True},
@@ -43,9 +43,9 @@ app = FastAPI(
 
 _enabled = get_enabled_apis()
 
-if _enabled.get("basis"):
-    from app.routes.basis import router as basis_router
-    app.include_router(basis_router, tags=["/basis"])
+if _enabled.get("basiswodh"):
+    from app.routes.basiswodh import router as basiswodh_router
+    app.include_router(basiswodh_router, tags=["/basiswodh"])
 
 if _enabled.get("dv360"):
     from app.routes.dv360 import router as dv360_router
@@ -73,9 +73,9 @@ if _enabled.get("gam"):
     from app.routes.gam import router as gam_router
     app.include_router(gam_router, tags=["/gam"])
 
-if _enabled.get("basisnet"):
-    from app.routes.basisnet import router as basisnet_router
-    app.include_router(basisnet_router, tags=["/basisnet"])
+if _enabled.get("basisuil"):
+    from app.routes.basisuil import router as basisuil_router
+    app.include_router(basisuil_router, tags=["/basisuil"])
 
 
 @app.on_event("startup")

@@ -1,5 +1,5 @@
 apis:
-  basis: true
+  basiswodh: true
   dv360: true
   triton: true
   freewheel: true
@@ -7,4 +7,4 @@ apis:
   adswizz: true
   thetradedesk: true
   gam: true
-  basisnet: true
+  basisuil: true

@@ -10,7 +10,8 @@ AdBridge is a mock API layer for local integration testing against ad-platform A
 ## Supported platforms
 | Prefix | Platform |
 |---|---|
-| `/basis/v1` | Basis Technologies |
+| `/basiswodh/v1` | Basis Technologies (WODH) |
+| `/basisuil` | Basis DSP (UIL) |
 | `/dv360/v4` | Google Display & Video 360 |
 | `/triton` | Triton Digital Metrics |
 | `/triton-booking` | Triton Digital Booking (TAP) |

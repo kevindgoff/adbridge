@@ -1,4 +1,4 @@
-"""Basis DSP API mock endpoints under /basisnet.
+"""Basis DSP API mock endpoints under /basisuil.
 
 Mirrors the real Basis DSP API (https://api.sitescout.com/) hierarchy:
   /advertisers/{advertiserId}
@@ -24,7 +24,7 @@ from datetime import datetime, timedelta
 def _past_date(days_ago):
     return (datetime.utcnow() - timedelta(days=days_ago)).strftime("%Y%m%d")
 
-router = APIRouter(prefix="/basisnet")
+router = APIRouter(prefix="/basisuil")
 
 
 def _q(conn, sql, params=()):

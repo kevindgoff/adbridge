@@ -1203,7 +1203,7 @@ CREATE TABLE IF NOT EXISTS gam_reports (
     update_time TEXT NOT NULL
 );
 
--- ==================== Basis DSP (BasisNet) Tables ====================
+-- ==================== Basis DSP (BasisUIL) Tables ====================
 
 CREATE TABLE IF NOT EXISTS bn_advertisers (
     advertiser_id SERIAL PRIMARY KEY,
@@ -2847,8 +2847,8 @@ def _seed_gam(cur, now):
              _past_date(30), _past_date(1), now))
 
 
-def _seed_basisnet(cur, now):
-    """Seed Basis DSP (BasisNet) mock data."""
+def _seed_basisuil(cur, now):
+    """Seed Basis DSP (BasisUIL) mock data."""
     cur.execute("SELECT COUNT(*) FROM bn_advertisers")
     if cur.fetchone()["count"] > 0:
         return

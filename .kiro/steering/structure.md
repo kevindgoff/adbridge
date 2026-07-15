@@ -8,7 +8,8 @@
 │   ├── database.py          # Schema DDL, seed functions, DB connection (get_db)
 │   ├── helpers.py           # Shared pagination (cursor-based) and response formatting
 │   └── routes/
-│       ├── basis.py         # /basis/v1 endpoints
+│       ├── basiswodh.py     # /basiswodh/v1 endpoints (Basis Technologies WODH)
+│       ├── basisuil.py      # /basisuil endpoints (Basis DSP UIL)
 │       ├── dv360.py         # /dv360/v4 endpoints
 │       ├── triton.py        # /triton endpoints (metrics)
 │       ├── triton_booking.py# /triton-booking endpoints (TAP)
@@ -48,7 +49,8 @@ Each ad platform gets its own file in `app/routes/`. The router is conditionally
 - Hivestack uses OData-style `{"value": [...]}` with `$top/$skip/$count` via `_odata()` helper
 
 ### Pagination
-- Basis/DV360/Triton/AdsWizz use cursor-based pagination (`paginate()` in `helpers.py`)
+- Basis WODH/DV360/Triton/AdsWizz use cursor-based pagination (`paginate()` in `helpers.py`)
+- Basis UIL uses page-based pagination (page/pageSize) with its own `_paginated_query()` helper
 - Hivestack uses offset-based OData pagination (`_odata()` in `hivestack.py`)
 
 ### Route-level helpers
