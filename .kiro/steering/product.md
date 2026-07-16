@@ -19,6 +19,7 @@ AdBridge is a mock API layer for local integration testing against ad-platform A
 | `/adswizz/v8` | AdsWizz Domain API v8 |
 | `/thetradedesk` | The Trade Desk Platform API v3 |
 | `/gam/v1` | Google Ad Manager REST API v1 |
+| `/radioworkflow` | Radio Workflow Partner API (`https://api.radioworkflow.com`) |
 
 Each platform can be toggled on/off in `config.yml` under `apis:`.
 

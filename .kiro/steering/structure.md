@@ -16,7 +16,8 @@
 │       ├── hivestack.py     # /hivestack endpoints (DOOH)
 │       ├── adswizz.py       # /adswizz/v8 endpoints
 │       ├── thetradedesk.py  # /thetradedesk endpoints (TTD v3)
-│       └── gam.py           # /gam/v1 endpoints (Google Ad Manager)
+│       ├── gam.py           # /gam/v1 endpoints (Google Ad Manager)
+│       └── radioworkflow.py # /radioworkflow endpoints (Radio Workflow Partner API)
 ├── tests/
 │   ├── test_all_routes.py   # Static analysis: checks psycopg2 patterns across all routes
 │   └── test_basis.py        # Basis-specific placeholder checks
@@ -31,6 +32,9 @@
 
 ### One route file per platform
 Each ad platform gets its own file in `app/routes/`. The router is conditionally included in `main.py` based on `config.yml` flags. Do not search outside the provided API url domain given by the user.   Store the platform api url's used in a retrievable location
+
+**Platform API URLs:**
+- Radio Workflow: `https://api.radioworkflow.com`
 
 ### Database access
 - No ORM — raw SQL with psycopg2 and `%s` placeholders (never `?`)
