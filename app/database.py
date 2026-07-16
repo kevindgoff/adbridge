@@ -1301,6 +1301,207 @@ CREATE TABLE IF NOT EXISTS bn_campaign_stats (
     cpm REAL DEFAULT 0,
     cpc REAL DEFAULT 0
 );
+
+-- ==================== Radio Workflow Partner API Tables ====================
+
+CREATE TABLE IF NOT EXISTS rw_stations (
+    core_id INTEGER PRIMARY KEY,
+    core_description TEXT NOT NULL,
+    call_letters TEXT,
+    band_descriptor TEXT DEFAULT '',
+    play_list_url TEXT,
+    inventory_url TEXT,
+    log_export_path TEXT,
+    media_export_path TEXT,
+    automation_id TEXT,
+    automation_system INTEGER DEFAULT 0,
+    automation_system_import INTEGER DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS rw_accounts (
+    core_id INTEGER PRIMARY KEY,
+    description TEXT NOT NULL,
+    disabled INTEGER DEFAULT 0,
+    integration_id TEXT,
+    contact_name TEXT,
+    contact_email TEXT,
+    contact_phone TEXT,
+    address TEXT,
+    city TEXT,
+    state TEXT,
+    zip TEXT,
+    country TEXT DEFAULT 'US'
+);
+
+CREATE TABLE IF NOT EXISTS rw_talent (
+    core_id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL,
+    email TEXT,
+    phone TEXT,
+    role TEXT DEFAULT 'producer',
+    disabled INTEGER DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS rw_prod_types (
+    core_id INTEGER PRIMARY KEY,
+    description TEXT NOT NULL,
+    is_uploadable INTEGER DEFAULT 0,
+    is_dubable INTEGER DEFAULT 0,
+    is_live INTEGER DEFAULT 0,
+    class INTEGER DEFAULT 0,
+    category INTEGER DEFAULT 0,
+    disabled INTEGER DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS rw_revenue_types (
+    core_id INTEGER PRIMARY KEY,
+    description TEXT NOT NULL,
+    disabled INTEGER DEFAULT 0,
+    integration_id TEXT,
+    is_billable INTEGER DEFAULT 0,
+    commission_exception_new INTEGER DEFAULT 0,
+    commission_exception_agency INTEGER DEFAULT 0,
+    default_commission REAL DEFAULT 15,
+    nat_rep_commission REAL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS rw_dayparts (
+    core_id INTEGER PRIMARY KEY,
+    description TEXT NOT NULL,
+    start_time TEXT,
+    end_time TEXT,
+    disabled INTEGER DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS rw_avail_types (
+    core_id INTEGER PRIMARY KEY,
+    description TEXT NOT NULL,
+    disabled INTEGER DEFAULT 0,
+    integration_id TEXT
+);
+
+CREATE TABLE IF NOT EXISTS rw_spot_types (
+    core_id INTEGER PRIMARY KEY,
+    description TEXT NOT NULL,
+    disabled INTEGER DEFAULT 0,
+    integration_id TEXT
+);
+
+CREATE TABLE IF NOT EXISTS rw_spot_lengths (
+    length_seconds INTEGER PRIMARY KEY
+);
+
+CREATE TABLE IF NOT EXISTS rw_automation_systems (
+    system_id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS rw_production (
+    core_id SERIAL PRIMARY KEY,
+    account_id INTEGER REFERENCES rw_accounts(core_id),
+    station_id INTEGER REFERENCES rw_stations(core_id),
+    prod_type_id INTEGER REFERENCES rw_prod_types(core_id),
+    title TEXT NOT NULL,
+    isci_code TEXT,
+    cart_id TEXT,
+    cut_number INTEGER DEFAULT 1,
+    length_seconds INTEGER DEFAULT 30,
+    start_date TEXT,
+    end_date TEXT,
+    status TEXT NOT NULL DEFAULT 'pending',
+    priority INTEGER DEFAULT 0,
+    talent_id INTEGER REFERENCES rw_talent(core_id),
+    notes TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS rw_instructions (
+    core_id SERIAL PRIMARY KEY,
+    production_id INTEGER NOT NULL REFERENCES rw_production(core_id),
+    line_number INTEGER NOT NULL DEFAULT 1,
+    instruction_text TEXT NOT NULL,
+    instruction_type TEXT DEFAULT 'copy',
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS rw_logs (
+    core_id SERIAL PRIMARY KEY,
+    station_id INTEGER REFERENCES rw_stations(core_id),
+    log_date TEXT NOT NULL,
+    status INTEGER DEFAULT 0,
+    total_spots INTEGER DEFAULT 0,
+    total_revenue REAL DEFAULT 0,
+    exported INTEGER DEFAULT 0,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS rw_days_logs (
+    core_id SERIAL PRIMARY KEY,
+    log_id INTEGER REFERENCES rw_logs(core_id),
+    station_id INTEGER REFERENCES rw_stations(core_id),
+    air_date TEXT NOT NULL,
+    scheduled_time TEXT,
+    actual_time TEXT,
+    cart_id TEXT,
+    isci_code TEXT,
+    account_id INTEGER REFERENCES rw_accounts(core_id),
+    length_seconds INTEGER DEFAULT 30,
+    daypart_id INTEGER REFERENCES rw_dayparts(core_id),
+    avail_type_id INTEGER REFERENCES rw_avail_types(core_id),
+    spot_type_id INTEGER REFERENCES rw_spot_types(core_id),
+    revenue REAL DEFAULT 0,
+    aired INTEGER DEFAULT 1,
+    reconciled INTEGER DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS rw_clocks (
+    core_id SERIAL PRIMARY KEY,
+    station_id INTEGER REFERENCES rw_stations(core_id),
+    name TEXT NOT NULL,
+    description TEXT,
+    day_of_week INTEGER,
+    hour_start INTEGER,
+    hour_end INTEGER,
+    active INTEGER DEFAULT 1
+);
+
+CREATE TABLE IF NOT EXISTS rw_clock_breaks (
+    core_id SERIAL PRIMARY KEY,
+    clock_id INTEGER NOT NULL REFERENCES rw_clocks(core_id),
+    position INTEGER NOT NULL DEFAULT 1,
+    avail_type_id INTEGER REFERENCES rw_avail_types(core_id),
+    max_units INTEGER DEFAULT 4,
+    max_seconds INTEGER DEFAULT 120
+);
+
+CREATE TABLE IF NOT EXISTS rw_ad_bank (
+    core_id SERIAL PRIMARY KEY,
+    station_id INTEGER REFERENCES rw_stations(core_id),
+    account_id INTEGER REFERENCES rw_accounts(core_id),
+    cart_id TEXT,
+    isci_code TEXT,
+    title TEXT NOT NULL,
+    length_seconds INTEGER DEFAULT 30,
+    start_date TEXT,
+    end_date TEXT,
+    created_date TEXT NOT NULL,
+    status TEXT DEFAULT 'active',
+    is_network INTEGER DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS rw_network_dubs (
+    core_id SERIAL PRIMARY KEY,
+    cart_id TEXT,
+    title TEXT NOT NULL,
+    isci_code TEXT,
+    length_seconds INTEGER DEFAULT 30,
+    first_seen_date TEXT NOT NULL,
+    agency TEXT,
+    advertiser TEXT,
+    status TEXT DEFAULT 'active'
+);
 """
 
 
@@ -2952,3 +3153,332 @@ def _seed_basisuil(cur, now):
                 "INSERT INTO bn_campaign_stats (advertiser_id, campaign_id, date, impressions, clicks, spend, conversions, ctr, cpm, cpc) "
                 "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
                 (adv_id, cid, _past_date(days_ago), imps, clicks, spend, convs, ctr, cpm, cpc))
+
+
+def _seed_radioworkflow(cur, now):
+    """Seed Radio Workflow Partner API mock data."""
+    cur.execute("SELECT COUNT(*) FROM rw_stations")
+    if cur.fetchone()["count"] > 0:
+        return
+
+    # --- Stations ---
+    stations = [
+        (1001, "97.1 KVVL Real Alternative Radio", "KVVL", "FM", None, None, None, None, None, 51, 0),
+        (1002, "101.5 WKRP Classic Hits", "WKRP", "FM", None, None, None, None, None, 51, 0),
+        (1003, "AM 680 KNBR Sports", "KNBR", "AM", None, None, None, None, None, 36, 0),
+        (1004, "92.3 WFAN Sports Radio", "WFAN", "FM", None, None, None, None, None, 36, 0),
+        (1005, "Digital Stream One", None, "", None, None, None, None, None, 0, 0),
+        (1006, "104.7 KISS Country", "KISS", "FM", None, None, None, None, None, 51, 0),
+    ]
+    for sid, desc, call, band, purl, iurl, lpath, mpath, aid, asys, asysimp in stations:
+        cur.execute(
+            "INSERT INTO rw_stations VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            (sid, desc, call, band, purl, iurl, lpath, mpath, aid, asys, asysimp))
+
+    # --- Accounts ---
+    accounts = [
+        (2001, "Acme Auto Group", 0, "AA", "John Smith", "john@acmeauto.com", "555-0201", "100 Main St", "Springfield", "IL", "62701", "US"),
+        (2002, "Metro Health Systems", 0, "MH", "Linda Garcia", "linda@metrohealth.com", "555-0202", "200 Hospital Dr", "Chicago", "IL", "60601", "US"),
+        (2003, "Sunrise Furniture", 0, "SF", "Tom Brown", "tom@sunrisefurn.com", "555-0203", "50 Oak Ave", "Dallas", "TX", "75201", "US"),
+        (2004, "First National Bank", 0, "FN", "Sarah Davis", "sarah@firstnatl.com", "555-0204", "1 Bank Plaza", "New York", "NY", "10001", "US"),
+        (2005, "City Pizza Co", 0, "CP", "Mike Wilson", "mike@citypizza.com", "555-0205", "75 Elm St", "Boston", "MA", "02101", "US"),
+        (2006, "TechStart Solutions", 0, "TS", "Amy Lee", "amy@techstart.com", "555-0206", "300 Innovation Way", "San Jose", "CA", "95101", "US"),
+        (2007, "Regional Airlines", 0, "RA", "Dan Johnson", "dan@regionalair.com", "555-0207", "Airport Blvd", "Atlanta", "GA", "30301", "US"),
+        (2008, "Green Valley Farms", 0, "GV", "Pat Miller", "pat@greenvalley.com", "555-0208", "Rural Route 5", "Des Moines", "IA", "50301", "US"),
+    ]
+    for row in accounts:
+        cur.execute(
+            "INSERT INTO rw_accounts VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            row)
+
+    # --- Talent ---
+    talent = [
+        (3001, "Chris Matthews", "chris@studio.com", "555-3001", "producer", 0),
+        (3002, "Jessica Torres", "jessica@studio.com", "555-3002", "voice_talent", 0),
+        (3003, "Ryan Blake", "ryan@studio.com", "555-3003", "producer", 0),
+        (3004, "Samantha Reed", "samantha@studio.com", "555-3004", "voice_talent", 0),
+        (3005, "Marcus Johnson", "marcus@studio.com", "555-3005", "engineer", 0),
+    ]
+    for row in talent:
+        cur.execute("INSERT INTO rw_talent VALUES (%s,%s,%s,%s,%s,%s)", row)
+
+    # --- Production Types ---
+    prod_types = [
+        (4001, "New Spot", 0, 1, 0, 0, 0, 0),
+        (4002, "Extend Spot", 0, 1, 0, 0, 0, 0),
+        (4003, "Show Credit", 0, 1, 0, 0, 0, 0),
+        (4004, "Production Only", 0, 0, 0, 0, 0, 0),
+        (4005, "Live Liner", 0, 0, 1, 0, 1, 0),
+        (4006, "Live Cross", 0, 0, 1, 0, 1, 0),
+        (4007, "Sponsorship Tag", 0, 1, 0, 0, 0, 0),
+        (4008, "Promo", 0, 1, 0, 1, 0, 0),
+    ]
+    for row in prod_types:
+        cur.execute("INSERT INTO rw_prod_types VALUES (%s,%s,%s,%s,%s,%s,%s,%s)", row)
+
+    # --- Revenue Types ---
+    revenue_types = [
+        (5001, "Cash", 0, "C", 0, 0, 0, 15, 0),
+        (5002, "Cash Package", 0, "CP", 0, 0, 0, 15, 0),
+        (5003, "Finance Charges", 0, "F", 0, 0, 0, 0, 0),
+        (5004, "Trade", 0, "T", 0, 0, 0, 15, 0),
+        (5005, "Political", 0, "PL", 1, 0, 0, 0, 0),
+        (5006, "National", 0, "N", 1, 0, 1, 15, 5),
+        (5007, "Digital", 0, "D", 1, 0, 0, 12, 0),
+        (5008, "NTR (Non-Traditional Revenue)", 0, "NTR", 1, 0, 0, 10, 0),
+    ]
+    for row in revenue_types:
+        cur.execute("INSERT INTO rw_revenue_types VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)", row)
+
+    # --- Dayparts ---
+    dayparts = [
+        (6001, "AM DRIVE 6-10", "06:00", "10:00", 0),
+        (6002, "MIDDAY 10-3", "10:00", "15:00", 0),
+        (6003, "PM DRIVE 3-7", "15:00", "19:00", 0),
+        (6004, "EVENING 7-12", "19:00", "00:00", 0),
+        (6005, "OVERNIGHT 12-6", "00:00", "06:00", 0),
+        (6006, "ROS (Run of Schedule)", "06:00", "00:00", 0),
+    ]
+    for row in dayparts:
+        cur.execute("INSERT INTO rw_dayparts VALUES (%s,%s,%s,%s,%s)", row)
+
+    # --- Avail Types ---
+    avail_types = [
+        (7001, "REGULAR COMMERCIAL", 0, "RG"),
+        (7002, "NEWS", 0, "NW"),
+        (7003, "SPORTS", 0, "SP"),
+        (7004, "PROMO", 0, "PR"),
+        (7005, "NATIONAL NEWS", 0, "NN"),
+        (7006, "SPECIAL PROGRAM", 0, "XX"),
+        (7007, "INTO STOP SET LINER", 0, "LN"),
+    ]
+    for row in avail_types:
+        cur.execute("INSERT INTO rw_avail_types VALUES (%s,%s,%s,%s)", row)
+
+    # --- Spot Types ---
+    spot_types = [
+        (8001, "30-Second Commercial", 0, "30"),
+        (8002, "60-Second Commercial", 0, "60"),
+        (8003, "15-Second Commercial", 0, "15"),
+        (8004, "Live Read", 0, "LR"),
+        (8005, "Sponsorship", 0, "SP"),
+        (8006, "PSA", 0, "PSA"),
+    ]
+    for row in spot_types:
+        cur.execute("INSERT INTO rw_spot_types VALUES (%s,%s,%s,%s)", row)
+
+    # --- Spot Lengths ---
+    for length in [10, 12, 15, 30, 60, 90]:
+        cur.execute("INSERT INTO rw_spot_lengths VALUES (%s)", (length,))
+
+    # --- Automation Systems (subset of the 50+ supported) ---
+    automation_systems = [
+        (1, "AudioVault"), (2, "BE Audiovault FleX"),
+        (5, "BSI OpX"), (7, "DAVID Systems (DigaSystem)"),
+        (10, "Dalet Plus"), (14, "Enco DAD"),
+        (20, "Google (DoubleClick)"), (22, "Harris Automation (Imagine)"),
+        (33, "Prophet NexGen"), (36, "RCS NexGen"),
+        (39, "Rivendell"), (43, "SMARTS Skylla"),
+        (45, "Techno Creations StationPlaylist"),
+        (51, "WideOrbit Radio Automation"),
+        (52, "WinAmp EXTM3U"), (53, "Zetta (RCS)"),
+        (99, "JSON Export"),
+    ]
+    for row in automation_systems:
+        cur.execute("INSERT INTO rw_automation_systems VALUES (%s,%s)", row)
+
+    # --- Production Orders (primary focus) ---
+    import random as _rng
+
+    production_statuses = ["pending", "in_progress", "completed", "cancelled"]
+    production_orders = []
+    for i in range(20):
+        prod_id = i + 1
+        acct = accounts[i % len(accounts)]
+        station = stations[i % len(stations)]
+        ptype = prod_types[i % len(prod_types)]
+        tal = talent[i % len(talent)]
+        status = production_statuses[i % len(production_statuses)]
+        length = _rng.choice([15, 30, 30, 30, 60])
+        isci = f"ISCI{_rng.randint(10000,99999)}"
+        cart = f"CART-{station[0]}-{_rng.randint(100,999)}"
+
+        cur.execute(
+            "INSERT INTO rw_production (account_id, station_id, prod_type_id, title, "
+            "isci_code, cart_id, cut_number, length_seconds, start_date, end_date, "
+            "status, priority, talent_id, notes, created_at, updated_at) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            (
+                acct[0], station[0], ptype[0],
+                f"{acct[1]} - {ptype[1]} ({length}s)",
+                isci, cart, 1, length,
+                _past_date(60 - i * 3), _future_date(30 + i * 5),
+                status, i % 3, tal[0],
+                f"Production order for {acct[1]}",
+                now, now,
+            ))
+        production_orders.append(prod_id)
+
+    # --- Instructions (for production orders) ---
+    instruction_templates = [
+        ("Copy: {account} summer sale starts now!", "copy"),
+        ("SFX: Upbeat music bed underneath", "sfx"),
+        ("VO: Mention website and phone number", "direction"),
+        ("Tag: Visit {account} dot com today", "tag"),
+        ("Live mention of current promotion", "live"),
+        ("Include legal disclaimer for financing", "legal"),
+    ]
+    instr_counter = 0
+    for prod_id in production_orders:
+        acct_name = accounts[(prod_id - 1) % len(accounts)][1]
+        num_lines = _rng.randint(2, 5)
+        for line_num in range(1, num_lines + 1):
+            tmpl = instruction_templates[instr_counter % len(instruction_templates)]
+            text = tmpl[0].format(account=acct_name)
+            cur.execute(
+                "INSERT INTO rw_instructions (production_id, line_number, instruction_text, "
+                "instruction_type, created_at) VALUES (%s,%s,%s,%s,%s)",
+                (prod_id, line_num, text, tmpl[1], now))
+            instr_counter += 1
+
+    # --- Logs ---
+    log_ids = []
+    for station in stations[:4]:
+        for days_ago in range(14):
+            log_date = _past_date(days_ago)
+            # Recent logs are reconciled, older are locked, very recent are drafts
+            if days_ago < 2:
+                status = 0  # draft
+            elif days_ago < 7:
+                status = 1  # locked, not reconciled
+            else:
+                status = 2  # locked and reconciled
+
+            total_spots = _rng.randint(40, 120)
+            total_revenue = round(_rng.uniform(2000, 15000), 2)
+            exported = 1 if status >= 1 else 0
+
+            cur.execute(
+                "INSERT INTO rw_logs (station_id, log_date, status, total_spots, "
+                "total_revenue, exported, created_at, updated_at) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s) RETURNING core_id",
+                (station[0], log_date, status, total_spots, total_revenue, exported, now, now))
+            result = cur.fetchone()
+            if result:
+                log_ids.append((result["core_id"], station[0], log_date))
+
+    # --- Days Logs (individual spot entries) ---
+    hours = ["06:15", "06:45", "07:15", "07:45", "08:15", "08:45",
+             "09:15", "10:00", "10:30", "11:00", "12:00", "12:30",
+             "13:00", "14:00", "15:15", "15:45", "16:15", "17:00",
+             "18:00", "19:30", "20:00", "21:00"]
+
+    for log_id, station_id, log_date in log_ids[:20]:  # limit to keep seed manageable
+        num_entries = _rng.randint(8, 16)
+        for j in range(num_entries):
+            sched_time = hours[j % len(hours)]
+            actual_offset = _rng.randint(-2, 2)
+            h, m = sched_time.split(":")
+            actual_min = int(m) + actual_offset
+            actual_time = f"{h}:{max(0, min(59, actual_min)):02d}"
+
+            acct = accounts[j % len(accounts)]
+            length = _rng.choice([15, 30, 30, 60])
+            daypart_idx = 0 if int(h) < 10 else (1 if int(h) < 15 else (2 if int(h) < 19 else 3))
+            daypart_id = dayparts[daypart_idx][0]
+            avail_id = avail_types[j % len(avail_types)][0]
+            spot_type_id = spot_types[j % len(spot_types)][0]
+            revenue = round(_rng.uniform(25, 500), 2)
+            aired = 1 if _rng.random() > 0.05 else 0  # 95% air rate
+            reconciled = 1 if aired and _rng.random() > 0.3 else 0
+
+            cur.execute(
+                "INSERT INTO rw_days_logs (log_id, station_id, air_date, scheduled_time, "
+                "actual_time, cart_id, isci_code, account_id, length_seconds, daypart_id, "
+                "avail_type_id, spot_type_id, revenue, aired, reconciled) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                (
+                    log_id, station_id, log_date, sched_time, actual_time,
+                    f"CART-{station_id}-{_rng.randint(100,999)}",
+                    f"ISCI{_rng.randint(10000,99999)}",
+                    acct[0], length, daypart_id, avail_id, spot_type_id,
+                    revenue, aired, reconciled,
+                ))
+
+    # --- Clocks ---
+    clock_data = [
+        (1001, "AM Drive Standard", "Standard AM drive clock", 1, 6, 10),
+        (1001, "Midday Relaxed", "Lighter load midday", 1, 10, 15),
+        (1001, "PM Drive Standard", "Standard PM drive clock", 1, 15, 19),
+        (1002, "All Day Default", "Default clock for WKRP", None, 6, 22),
+        (1003, "Sports Heavy", "Heavy spot load for sports", 1, 6, 19),
+    ]
+    clock_ids = []
+    for station_id, name, desc, dow, hstart, hend in clock_data:
+        cur.execute(
+            "INSERT INTO rw_clocks (station_id, name, description, day_of_week, "
+            "hour_start, hour_end, active) VALUES (%s,%s,%s,%s,%s,%s,%s) RETURNING core_id",
+            (station_id, name, desc, dow, hstart, hend, 1))
+        result = cur.fetchone()
+        if result:
+            clock_ids.append(result["core_id"])
+
+    # --- Clock Breaks ---
+    for clock_id in clock_ids:
+        num_breaks = _rng.randint(3, 6)
+        for pos in range(1, num_breaks + 1):
+            avail_id = avail_types[pos % len(avail_types)][0]
+            max_units = _rng.choice([3, 4, 5, 6])
+            max_secs = max_units * 30
+            cur.execute(
+                "INSERT INTO rw_clock_breaks (clock_id, position, avail_type_id, "
+                "max_units, max_seconds) VALUES (%s,%s,%s,%s,%s)",
+                (clock_id, pos, avail_id, max_units, max_secs))
+
+    # --- Ad Bank ---
+    for i in range(30):
+        station = stations[i % len(stations)]
+        acct = accounts[i % len(accounts)]
+        length = _rng.choice([15, 30, 30, 60])
+        is_network = 1 if i % 5 == 0 else 0
+        created = _past_date(_rng.randint(1, 90))
+        start = created
+        end = _future_date(_rng.randint(30, 180))
+
+        cur.execute(
+            "INSERT INTO rw_ad_bank (station_id, account_id, cart_id, isci_code, title, "
+            "length_seconds, start_date, end_date, created_date, status, is_network) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            (
+                station[0], acct[0],
+                f"CART-{station[0]}-{_rng.randint(100,999)}",
+                f"ISCI{_rng.randint(10000,99999)}",
+                f"{acct[1]} - {'Network ' if is_network else ''}Spot {i+1}",
+                length, start, end, created,
+                _rng.choice(["active", "active", "active", "expired"]),
+                is_network,
+            ))
+
+    # --- Network Dubs ---
+    network_advertisers = [
+        "McDonald's", "Geico", "Progressive Insurance", "Amazon",
+        "Toyota National", "Ford Motor Co", "Coca-Cola", "AT&T",
+    ]
+    network_agencies = [
+        "Omnicom", "WPP", "Publicis", "Interpublic", "Dentsu",
+    ]
+    for i in range(12):
+        cur.execute(
+            "INSERT INTO rw_network_dubs (cart_id, title, isci_code, length_seconds, "
+            "first_seen_date, agency, advertiser, status) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
+            (
+                f"NET-{_rng.randint(1000,9999)}",
+                f"{network_advertisers[i % len(network_advertisers)]} - Q3 Spot {i+1}",
+                f"NTWK{_rng.randint(10000,99999)}",
+                _rng.choice([15, 30, 60]),
+                _past_date(_rng.randint(1, 45)),
+                network_agencies[i % len(network_agencies)],
+                network_advertisers[i % len(network_advertisers)],
+                "active",
+            ))

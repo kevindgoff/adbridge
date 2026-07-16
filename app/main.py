@@ -30,12 +30,13 @@ tags_metadata = [
     {"name": "/thetradedesk", "description": "The Trade Desk Platform API v3 mock endpoints"},
     {"name": "/gam", "description": "Google Ad Manager REST API v1 mock endpoints"},
     {"name": "/basisuil", "description": "Basis DSP API mock endpoints"},
+    {"name": "/radioworkflow", "description": "Radio Workflow Partner API mock endpoints"},
 ]
 
 app = FastAPI(
     title="AdBridge - Local Ad Platform API Mock",
-    description="Mock API layer for local integration testing against Basis WODH, Basis UIL (DSP), DV360, Triton Metrics, Triton Booking, Hivestack DOOH, AdsWizz, The Trade Desk, and Google Ad Manager platform APIs.",
-    version="0.8.0",
+    description="Mock API layer for local integration testing against Basis WODH, Basis UIL (DSP), DV360, Triton Metrics, Triton Booking, Hivestack DOOH, AdsWizz, The Trade Desk, Google Ad Manager, and Radio Workflow platform APIs.",
+    version="0.9.0",
     openapi_tags=tags_metadata,
     swagger_ui_parameters={"docExpansion": "none", "persistAuthorization": True},
     dependencies=_global_deps,
@@ -76,6 +77,10 @@ if _enabled.get("gam"):
 if _enabled.get("basisuil"):
     from app.routes.basisuil import router as basisuil_router
     app.include_router(basisuil_router, tags=["/basisuil"])
+
+if _enabled.get("radioworkflow"):
+    from app.routes.radioworkflow import router as radioworkflow_router
+    app.include_router(radioworkflow_router, tags=["/radioworkflow"])
 
 
 @app.on_event("startup")

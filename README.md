@@ -15,6 +15,7 @@ A mock API layer for local integration testing against ad-platform APIs. Built w
 | `/adswizz/v8` | AdsWizz Domain API v8 |
 | `/thetradedesk` | The Trade Desk Platform API v3 |
 | `/gam/v1` | Google Ad Manager REST API v1 |
+| `/radioworkflow` | Radio Workflow Partner API (`https://api.radioworkflow.com`) |
 
 Each platform can be toggled on or off in `config.yml`:
 
@@ -253,7 +254,8 @@ If `API_KEY` is blank or unset, all requests pass through without auth.
 │       ├── hivestack.py
 │       ├── adswizz.py
 │       ├── thetradedesk.py
-│       └── gam.py
+│       ├── gam.py
+│       └── radioworkflow.py
 ├── tests/
 ├── config.yml               # Enable/disable platform APIs
 ├── .env.local.example       # Env template for local Docker (Postgres)
