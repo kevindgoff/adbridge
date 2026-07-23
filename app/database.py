@@ -1302,6 +1302,47 @@ CREATE TABLE IF NOT EXISTS bn_campaign_stats (
     cpc REAL DEFAULT 0
 );
 
+CREATE TABLE IF NOT EXISTS bn_reports (
+    id SERIAL PRIMARY KEY,
+    advertiser_id INTEGER NOT NULL REFERENCES bn_advertisers(advertiser_id),
+    description TEXT,
+    report_type TEXT NOT NULL DEFAULT 'BASIC',
+    aggregation TEXT NOT NULL DEFAULT 'DAILY',
+    from_date TEXT NOT NULL,
+    to_date TEXT NOT NULL,
+    entity_ids TEXT,
+    entity_type TEXT DEFAULT 'CAMPAIGN',
+    conversion_pixel_ids TEXT,
+    timezone TEXT DEFAULT 'EST',
+    status TEXT NOT NULL DEFAULT 'QUEUED',
+    start_time TEXT,
+    completion_time TEXT,
+    expiry_time TEXT,
+    url TEXT,
+    schedule_id INTEGER,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS bn_report_schedules (
+    id SERIAL PRIMARY KEY,
+    advertiser_id INTEGER NOT NULL REFERENCES bn_advertisers(advertiser_id),
+    name TEXT NOT NULL,
+    report_type TEXT NOT NULL DEFAULT 'BASIC',
+    aggregation TEXT NOT NULL DEFAULT 'DAILY',
+    entity_ids TEXT,
+    entity_type TEXT DEFAULT 'CAMPAIGN',
+    conversion_pixel_ids TEXT,
+    schedule_start_date TEXT NOT NULL,
+    schedule_end_date TEXT NOT NULL,
+    time_to_run_report TEXT DEFAULT '01:00',
+    frequency TEXT NOT NULL DEFAULT 'WEEKLY',
+    lookback_window INTEGER DEFAULT 7,
+    lookback_type TEXT DEFAULT 'DAY',
+    emails TEXT,
+    status TEXT NOT NULL DEFAULT 'ACTIVE',
+    created_at TEXT NOT NULL
+);
+
 -- ==================== Radio Workflow Partner API Tables ====================
 
 CREATE TABLE IF NOT EXISTS rw_stations (
@@ -3153,6 +3194,52 @@ def _seed_basisuil(cur, now):
                 "INSERT INTO bn_campaign_stats (advertiser_id, campaign_id, date, impressions, clicks, spend, conversions, ctr, cpm, cpc) "
                 "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
                 (adv_id, cid, _past_date(days_ago), imps, clicks, spend, convs, ctr, cpm, cpc))
+
+    # --- Pre-existing Reports (completed) ---
+    report_seeds = [
+        (156329, "Spring campaigns daily", "BASIC", "DAILY",
+         _past_date(7), _past_date(0), "[3017848,3017849]", "CAMPAIGN", "EST", "DONE"),
+        (156329, "Holiday retargeting weekly", "BASIC", "WEEKLY",
+         _past_date(30), _past_date(0), "[3017850]", "CAMPAIGN", "EST", "DONE"),
+        (156330, "Cloud launch monthly", "BASIC", "MONTHLY",
+         _past_date(30), _past_date(0), "[3017852,3017853]", "CAMPAIGN", "EST", "DONE"),
+        (156330, "Mobile install daily", "AD_WITH_HIERARCHY", "DAILY",
+         _past_date(14), _past_date(0), "[3017854,3017855]", "CAMPAIGN", "EST", "DONE"),
+        (156331, "Organics brand report", "BASIC", "DAILY",
+         _past_date(7), _past_date(0), "[3017856]", "CAMPAIGN", "EST", "QUEUED"),
+    ]
+    for adv_id, desc, rtype, agg, fdate, tdate, eids, etype, tz, status in report_seeds:
+        start_t = now.replace("T", " ").replace("Z", "")[:19] if status == "DONE" else None
+        comp_t = start_t
+        exp_t = (_future_date(15) + " 12:00:00") if status == "DONE" else None
+        url = f"https://cdn01.basis.net/reports/{adv_id}/{fdate}/{desc.replace(' ', '_')}.csv" if status == "DONE" else None
+        cur.execute(
+            "INSERT INTO bn_reports (advertiser_id, description, report_type, aggregation, "
+            "from_date, to_date, entity_ids, entity_type, timezone, status, "
+            "start_time, completion_time, expiry_time, url, created_at) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            (adv_id, desc, rtype, agg, fdate, tdate, eids, etype, tz, status,
+             start_t, comp_t, exp_t, url, now))
+
+    # --- Report Schedules ---
+    schedule_seeds = [
+        (156329, "Acme Weekly Performance", "BASIC", "WEEKLY", "[3017848,3017849,3017850]",
+         "CAMPAIGN", _past_date(60), _future_date(30), "01:00", "WEEKLY", 7, "DAY",
+         '["admin@acme-ads.com"]', "ACTIVE"),
+        (156330, "TechNova Daily Check", "BASIC", "DAILY", "[3017852,3017853,3017854,3017855]",
+         "CAMPAIGN", _past_date(14), _future_date(60), "08:00", "DAILY", 1, "DAY",
+         '["media@technova.com"]', "ACTIVE"),
+        (156331, "GreenLeaf Monthly", "BASIC", "MONTHLY", "[3017856,3017857]",
+         "CAMPAIGN", _past_date(30), _future_date(90), "02:00", "MONTHLY", 30, "DAY",
+         '["digital@greenleaf.com"]', "PAUSED"),
+    ]
+    for adv_id, name, rtype, agg, eids, etype, sstart, send, trun, freq, lb, lbt, emails, status in schedule_seeds:
+        cur.execute(
+            "INSERT INTO bn_report_schedules (advertiser_id, name, report_type, aggregation, "
+            "entity_ids, entity_type, schedule_start_date, schedule_end_date, time_to_run_report, "
+            "frequency, lookback_window, lookback_type, emails, status, created_at) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            (adv_id, name, rtype, agg, eids, etype, sstart, send, trun, freq, lb, lbt, emails, status, now))
 
 
 def _seed_radioworkflow(cur, now):
