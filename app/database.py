@@ -3111,10 +3111,10 @@ def _seed_basisuil(cur, now):
     brands = [
         (2, 156329, "SuperCool Scooters", "The fastest, coolest scooters!", "supercoolscooters.com", False),
         (3, 156329, "ACME Corp", "Foolproof solutions", "acme.com", False),
-        (4, 156330, "TechNova Cloud", "Cloud platform advertising", "cloud.technova.com", False),
-        (5, 156330, "TechNova Mobile", "Mobile app campaigns", "mobile.technova.com", False),
-        (6, 156331, "GreenLeaf Organics", "Organic products brand", "organics.greenleaf.com", False),
-        (7, 156331, "EcoTravel", "Sustainable travel brand", "ecotravel.greenleaf.com", False),
+        (4, 156329, "TechNova Cloud", "Cloud platform advertising", "cloud.technova.com", False),
+        (5, 156329, "TechNova Mobile", "Mobile app campaigns", "mobile.technova.com", False),
+        (6, 156329, "GreenLeaf Organics", "Organic products brand", "organics.greenleaf.com", False),
+        (7, 156329, "EcoTravel", "Sustainable travel brand", "ecotravel.greenleaf.com", False),
     ]
     for brand_id, adv_id, name, notes, domain, archived in brands:
         cur.execute(
@@ -3127,10 +3127,10 @@ def _seed_basisuil(cur, now):
         (30535, 156329, 2, "Summer 2025", "online", "CTR", "2.25", 45000.0, "all_time", True, _past_date(90), _future_date(30), "CAMPAIGN_GROUP", "margin", 0),
         (30536, 156329, 2, "Holiday Push Q4", "online", "CPA", "4.50", 225.0, "daily", True, _past_date(30), _future_date(60), "CAMPAIGN", None, 0),
         (30537, 156329, 3, "ACME Brand Awareness", "offline", None, None, 10000.0, "all_time", False, _past_date(60), _future_date(15), "CAMPAIGN_GROUP", "markup", 0.30),
-        (30538, 156330, 4, "Cloud Launch Campaign", "online", "CTR", "1.5", 500.0, "daily", True, _past_date(14), _future_date(45), "CAMPAIGN", None, 0),
-        (30539, 156330, 5, "Mobile App Install", "online", "CPA", "8.00", 30000.0, "all_time", True, _past_date(7), _future_date(90), "CAMPAIGN_GROUP", "margin", 0.15),
-        (30540, 156331, 6, "Organics Spring Sale", "online", None, None, 150.0, "daily", True, _past_date(5), _future_date(25), "CAMPAIGN", None, 0),
-        (30541, 156331, 7, "EcoTravel Summer", "offline", "CPClick", "1.20", 20000.0, "all_time", False, _past_date(45), _future_date(10), "CAMPAIGN_GROUP", "flat_cpm", 1.25),
+        (30538, 156329, 4, "Cloud Launch Campaign", "online", "CTR", "1.5", 500.0, "daily", True, _past_date(14), _future_date(45), "CAMPAIGN", None, 0),
+        (30539, 156329, 5, "Mobile App Install", "online", "CPA", "8.00", 30000.0, "all_time", True, _past_date(7), _future_date(90), "CAMPAIGN_GROUP", "margin", 0.15),
+        (30540, 156329, 6, "Organics Spring Sale", "online", None, None, 150.0, "daily", True, _past_date(5), _future_date(25), "CAMPAIGN", None, 0),
+        (30541, 156329, 7, "EcoTravel Summer", "offline", "CPClick", "1.20", 20000.0, "all_time", False, _past_date(45), _future_date(10), "CAMPAIGN_GROUP", "flat_cpm", 1.25),
     ]
     for gid, adv_id, brand_id, name, status, kpi_type, kpi_value, budget, btype, even, fstart, fend, pacing, spend_type, spend_rate in groups:
         cur.execute(
@@ -3144,12 +3144,12 @@ def _seed_basisuil(cur, now):
         (3017849, 156329, 30535, "Summer 2025", "Scooter Video - Preroll", "online", 4.0, 10.0, "", 100.0, "daily", True, None, "none", _past_date(85), _future_date(25), "advanced", True, False, "eligible"),
         (3017850, 156329, 30536, "Holiday Push Q4", "Holiday Retargeting", "offline", 2.5, 8.0, "Retargeting campaign", 50.0, "daily", True, 5000, "daily", _past_date(25), _future_date(55), "advanced", False, True, "eligible"),
         (3017851, 156329, 30537, "ACME Brand Awareness", "ACME CTV Awareness", "offline", 8.0, 15.0, "", 500.0, "all_time", False, None, "none", _past_date(55), _future_date(10), "advanced", True, False, "eligible"),
-        (3017852, 156330, 30538, "Cloud Launch Campaign", "Cloud Platform - Search", "online", 3.0, 7.0, "", 200.0, "daily", True, None, "none", _past_date(10), _future_date(40), "advanced", True, False, "eligible"),
-        (3017853, 156330, 30538, "Cloud Launch Campaign", "Cloud Platform - Display", "online", 1.5, 4.0, "", 150.0, "daily", True, 20000, "all_time", _past_date(10), _future_date(40), "advanced", True, False, "eligible"),
-        (3017854, 156330, 30539, "Mobile App Install", "Mobile Install - Android", "online", 5.0, 12.0, "Android only", 300.0, "all_time", True, None, "none", _past_date(5), _future_date(85), "advanced", False, True, "eligible"),
-        (3017855, 156330, 30539, "Mobile App Install", "Mobile Install - iOS", "online", 6.0, 14.0, "iOS only", 350.0, "all_time", True, None, "none", _past_date(5), _future_date(85), "advanced", False, True, "eligible"),
-        (3017856, 156331, 30540, "Organics Spring Sale", "Organics - Native Ads", "online", 2.0, 6.0, "", 100.0, "daily", True, 8000, "daily", _past_date(3), _future_date(22), "advanced", True, False, "eligible"),
-        (3017857, 156331, 30541, "EcoTravel Summer", "EcoTravel DOOH", "offline", 10.0, 25.0, "DOOH pilot", 1000.0, "all_time", False, None, "none", _past_date(40), _future_date(5), "dooh", True, False, "eligible"),
+        (3017852, 156329, 30538, "Cloud Launch Campaign", "Cloud Platform - Search", "online", 3.0, 7.0, "", 200.0, "daily", True, None, "none", _past_date(10), _future_date(40), "advanced", True, False, "eligible"),
+        (3017853, 156329, 30538, "Cloud Launch Campaign", "Cloud Platform - Display", "online", 1.5, 4.0, "", 150.0, "daily", True, 20000, "all_time", _past_date(10), _future_date(40), "advanced", True, False, "eligible"),
+        (3017854, 156329, 30539, "Mobile App Install", "Mobile Install - Android", "online", 5.0, 12.0, "Android only", 300.0, "all_time", True, None, "none", _past_date(5), _future_date(85), "advanced", False, True, "eligible"),
+        (3017855, 156329, 30539, "Mobile App Install", "Mobile Install - iOS", "online", 6.0, 14.0, "iOS only", 350.0, "all_time", True, None, "none", _past_date(5), _future_date(85), "advanced", False, True, "eligible"),
+        (3017856, 156329, 30540, "Organics Spring Sale", "Organics - Native Ads", "online", 2.0, 6.0, "", 100.0, "daily", True, 8000, "daily", _past_date(3), _future_date(22), "advanced", True, False, "eligible"),
+        (3017857, 156329, 30541, "EcoTravel Summer", "EcoTravel DOOH", "offline", 10.0, 25.0, "DOOH pilot", 1000.0, "all_time", False, None, "none", _past_date(40), _future_date(5), "dooh", True, False, "eligible"),
     ]
     for cid, adv_id, gid, gname, name, status, dbid, maxbid, notes, budget, btype, even, impcap, impcaptype, fstart, fend, ctype, rop, xdev, review in campaigns:
         created = _past_date(random.randint(1, 90)) + " " + f"{random.randint(8,17):02d}:{random.randint(0,59):02d}:{random.randint(0,59):02d}"
@@ -3165,11 +3165,11 @@ def _seed_basisuil(cur, now):
         (156329, 2, "Scooter Banner 728x90", "display", 728, 90, "active", "https://supercoolscooters.com/summer"),
         (156329, 2, "Scooter Video 15s", "video", 1920, 1080, "active", "https://supercoolscooters.com/video"),
         (156329, 3, "ACME CTV Spot 30s", "video", 1920, 1080, "active", "https://acme.com/brand"),
-        (156330, 4, "Cloud Banner 320x50", "display", 320, 50, "active", "https://cloud.technova.com/signup"),
-        (156330, 4, "Cloud Native Ad", "native", None, None, "active", "https://cloud.technova.com/features"),
-        (156330, 5, "Mobile Install Ad", "display", 320, 480, "active", "https://mobile.technova.com/install"),
-        (156331, 6, "Organics Native Card", "native", None, None, "active", "https://organics.greenleaf.com/sale"),
-        (156331, 7, "EcoTravel DOOH 1920x1080", "video", 1920, 1080, "active", "https://ecotravel.greenleaf.com"),
+        (156329, 4, "Cloud Banner 320x50", "display", 320, 50, "active", "https://cloud.technova.com/signup"),
+        (156329, 4, "Cloud Native Ad", "native", None, None, "active", "https://cloud.technova.com/features"),
+        (156329, 5, "Mobile Install Ad", "display", 320, 480, "active", "https://mobile.technova.com/install"),
+        (156329, 6, "Organics Native Card", "native", None, None, "active", "https://organics.greenleaf.com/sale"),
+        (156329, 7, "EcoTravel DOOH 1920x1080", "video", 1920, 1080, "active", "https://ecotravel.greenleaf.com"),
     ]
     for adv_id, brand_id, name, ctype, w, h, status, url in creative_data:
         cur.execute(
@@ -3201,11 +3201,11 @@ def _seed_basisuil(cur, now):
          _past_date(7), _past_date(0), "[3017848,3017849]", "CAMPAIGN", "EST", "DONE"),
         (156329, "Holiday retargeting weekly", "BASIC", "WEEKLY",
          _past_date(30), _past_date(0), "[3017850]", "CAMPAIGN", "EST", "DONE"),
-        (156330, "Cloud launch monthly", "BASIC", "MONTHLY",
+        (156329, "Cloud launch monthly", "BASIC", "MONTHLY",
          _past_date(30), _past_date(0), "[3017852,3017853]", "CAMPAIGN", "EST", "DONE"),
-        (156330, "Mobile install daily", "AD_WITH_HIERARCHY", "DAILY",
+        (156329, "Mobile install daily", "AD_WITH_HIERARCHY", "DAILY",
          _past_date(14), _past_date(0), "[3017854,3017855]", "CAMPAIGN", "EST", "DONE"),
-        (156331, "Organics brand report", "BASIC", "DAILY",
+        (156329, "Organics brand report", "BASIC", "DAILY",
          _past_date(7), _past_date(0), "[3017856]", "CAMPAIGN", "EST", "QUEUED"),
     ]
     for adv_id, desc, rtype, agg, fdate, tdate, eids, etype, tz, status in report_seeds:
@@ -3226,10 +3226,10 @@ def _seed_basisuil(cur, now):
         (156329, "Acme Weekly Performance", "BASIC", "WEEKLY", "[3017848,3017849,3017850]",
          "CAMPAIGN", _past_date(60), _future_date(30), "01:00", "WEEKLY", 7, "DAY",
          '["admin@acme-ads.com"]', "ACTIVE"),
-        (156330, "TechNova Daily Check", "BASIC", "DAILY", "[3017852,3017853,3017854,3017855]",
+        (156329, "TechNova Daily Check", "BASIC", "DAILY", "[3017852,3017853,3017854,3017855]",
          "CAMPAIGN", _past_date(14), _future_date(60), "08:00", "DAILY", 1, "DAY",
          '["media@technova.com"]', "ACTIVE"),
-        (156331, "GreenLeaf Monthly", "BASIC", "MONTHLY", "[3017856,3017857]",
+        (156329, "GreenLeaf Monthly", "BASIC", "MONTHLY", "[3017856,3017857]",
          "CAMPAIGN", _past_date(30), _future_date(90), "02:00", "MONTHLY", 30, "DAY",
          '["digital@greenleaf.com"]', "PAUSED"),
     ]
