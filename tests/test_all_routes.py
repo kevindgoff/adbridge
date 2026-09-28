@@ -10,6 +10,7 @@ ROUTE_FILES = [
     "app/routes/triton.py",
     "app/routes/triton_booking.py",
     "app/routes/hivestack.py",
+    "app/routes/adswizz.py",
 ]
 
 

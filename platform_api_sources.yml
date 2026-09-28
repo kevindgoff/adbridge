@@ -1,0 +1,32 @@
+# Platform API sources
+#
+# Every external URL a mock in app/routes/ was modelled on. Keep this file in
+# sync when a route module is added or re-researched, so the next update can
+# re-pull the same source instead of searching for it.
+#
+#   docs      — human-readable reference
+#   spec      — machine-readable spec (OpenAPI etc.), when one exists
+#   base_url  — the real API's server URL (for reference only; the mock never calls it)
+#   retrieved — date the source was last read to build/verify the mock
+
+platforms:
+  adswizz:
+    module: app/routes/adswizz.py
+    mock_prefix: /adswizz/v9
+    docs: https://docs.adswizz.com/domain-api/v9/
+    spec: https://docs.adswizz.com/domain-api/v9/openapi.json
+    base_url: https://api.adswizz.com/domain
+    retrieved: 2026-09-28
+    # v8 (superseded, no longer mocked): https://docs.adswizz.com/domain-api/v8/openapi.json
+
+  basisnet:
+    module: app/routes/basisnet.py
+    base_url: https://api.sitescout.com/
+
+  gam:
+    module: app/routes/gam.py
+    docs: https://developers.google.com/ad-manager/api/beta/reference/rest
+
+  hivestack:
+    module: app/routes/hivestack.py
+    base_url: https://apps.hivestack.com/api/v2/

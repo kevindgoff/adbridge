@@ -15,7 +15,7 @@ AdBridge is a mock API layer for local integration testing against ad-platform A
 | `/triton` | Triton Digital Metrics |
 | `/triton-booking` | Triton Digital Booking (TAP) |
 | `/hivestack` | Hivestack OpenRTB 2.5 DOOH |
-| `/adswizz/v8` | AdsWizz Domain API v8 |
+| `/adswizz/v9` | AdsWizz Domain API v9 |
 | `/thetradedesk` | The Trade Desk Platform API v3 |
 | `/gam/v1` | Google Ad Manager REST API v1 |
 

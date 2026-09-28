@@ -11,7 +11,7 @@ A mock API layer for local integration testing against ad-platform APIs. Built w
 | `/triton` | Triton Digital Metrics |
 | `/triton-booking` | Triton Digital Booking (TAP) |
 | `/hivestack` | Hivestack OpenRTB 2.5 DOOH |
-| `/adswizz/v8` | AdsWizz Domain API v8 |
+| `/adswizz/v9` | AdsWizz Domain API v9 |
 | `/thetradedesk` | The Trade Desk Platform API v3 |
 | `/gam/v1` | Google Ad Manager REST API v1 |
 
@@ -248,11 +248,12 @@ If `API_KEY` is blank or unset, all requests pass through without auth.
 │       ├── triton.py
 │       ├── triton_booking.py
 │       ├── hivestack.py
-│       ├── adswizz.py
+│       ├── adswizz.py       # AdsWizz Domain API v9
 │       ├── thetradedesk.py
 │       └── gam.py
 ├── tests/
 ├── config.yml               # Enable/disable platform APIs
+├── platform_api_sources.yml # Doc/spec URLs each platform mock was built from
 ├── .env.local.example       # Env template for local Docker (Postgres)
 ├── .env.cloudsql.example    # Env template for Cloud SQL
 ├── Dockerfile
@@ -296,5 +297,7 @@ Use this prompt template to add any new ad platform mock. Replace the placeholde
 > 4. **App registration** — `app/main.py`: Add an OpenAPI tag and conditional `include_router` block.
 >
 > 5. **Config file** — `config.yml`: Add `platformname: true` under `apis:`.
+>
+> 6. **Source URLs** — `platform_api_sources.yml`: Record the docs/spec URLs used.
 >
 > Do not modify existing platforms. Do not add tests unless asked.
