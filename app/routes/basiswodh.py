@@ -1,4 +1,4 @@
-"""All Basis API mock endpoints under /basis/v1."""
+"""All Basis API mock endpoints under /basiswodh/v1."""
 
 import uuid
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -7,7 +7,7 @@ from typing import Optional
 from app.database import get_db
 from app.helpers import paginate, list_response, single_response
 
-router = APIRouter(prefix="/basis/v1")
+router = APIRouter(prefix="/basiswodh/v1")
 
 
 def _uuid():

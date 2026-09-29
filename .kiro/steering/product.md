@@ -10,7 +10,8 @@ AdBridge is a mock API layer for local integration testing against ad-platform A
 ## Supported platforms
 | Prefix | Platform |
 |---|---|
-| `/basis/v1` | Basis Technologies |
+| `/basiswodh/v1` | Basis Technologies (WODH) |
+| `/basisuil` | Basis DSP (UIL) |
 | `/dv360/v4` | Google Display & Video 360 |
 | `/triton` | Triton Digital Metrics |
 | `/triton-booking` | Triton Digital Booking (TAP) |
@@ -18,6 +19,7 @@ AdBridge is a mock API layer for local integration testing against ad-platform A
 | `/adswizz/v9` | AdsWizz Domain API v9 |
 | `/thetradedesk` | The Trade Desk Platform API v3 |
 | `/gam/v1` | Google Ad Manager REST API v1 |
+| `/radioworkflow` | Radio Workflow Partner API (`https://api.radioworkflow.com`) |
 
 Each platform can be toggled on/off in `config.yml` under `apis:`.
 

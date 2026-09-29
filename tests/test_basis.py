@@ -1,14 +1,14 @@
-"""Tests for Basis API endpoints — verifies SQL parameter placeholders are correct for PostgreSQL."""
+"""Tests for Basis WODH API endpoints — verifies SQL parameter placeholders are correct for PostgreSQL."""
 
 
-def get_basis_source():
-    with open("app/routes/basis.py", "r") as f:
+def get_basiswodh_source():
+    with open("app/routes/basiswodh.py", "r") as f:
         return f.read()
 
 
-def test_no_sqlite_placeholders_in_basis_routes():
+def test_no_sqlite_placeholders_in_basiswodh_routes():
     """Every parameterised SQL query must use %s (PostgreSQL) not ? (SQLite)."""
-    source = get_basis_source()
+    source = get_basiswodh_source()
     lines = source.splitlines()
     violations = []
     for i, line in enumerate(lines, 1):

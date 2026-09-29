@@ -8,14 +8,16 @@
 │   ├── database.py          # Schema DDL, seed functions, DB connection (get_db)
 │   ├── helpers.py           # Shared pagination (cursor-based) and response formatting
 │   └── routes/
-│       ├── basis.py         # /basis/v1 endpoints
+│       ├── basiswodh.py     # /basiswodh/v1 endpoints (Basis Technologies WODH)
+│       ├── basisuil.py      # /basisuil endpoints (Basis DSP UIL)
 │       ├── dv360.py         # /dv360/v4 endpoints
 │       ├── triton.py        # /triton endpoints (metrics)
 │       ├── triton_booking.py# /triton-booking endpoints (TAP)
 │       ├── hivestack.py     # /hivestack endpoints (DOOH)
 │       ├── adswizz.py       # /adswizz/v9 endpoints
 │       ├── thetradedesk.py  # /thetradedesk endpoints (TTD v3)
-│       └── gam.py           # /gam/v1 endpoints (Google Ad Manager)
+│       ├── gam.py           # /gam/v1 endpoints (Google Ad Manager)
+│       └── radioworkflow.py # /radioworkflow endpoints (Radio Workflow Partner API)
 ├── tests/
 │   ├── test_all_routes.py   # Static analysis: checks psycopg2 patterns across all routes
 │   └── test_basis.py        # Basis-specific placeholder checks
@@ -30,6 +32,9 @@
 
 ### One route file per platform
 Each ad platform gets its own file in `app/routes/`. The router is conditionally included in `main.py` based on `config.yml` flags. Do not search outside the provided API url domain given by the user.   Store the platform api url's used in a retrievable location
+
+**Platform API URLs:**
+- Radio Workflow: `https://api.radioworkflow.com`
 
 ### Database access
 - No ORM — raw SQL with psycopg2 and `%s` placeholders (never `?`)
@@ -48,7 +53,8 @@ Each ad platform gets its own file in `app/routes/`. The router is conditionally
 - Hivestack uses OData-style `{"value": [...]}` with `$top/$skip/$count` via `_odata()` helper
 
 ### Pagination
-- Basis/DV360/Triton/AdsWizz use cursor-based pagination (`paginate()` in `helpers.py`)
+- Basis WODH/DV360/Triton/AdsWizz use cursor-based pagination (`paginate()` in `helpers.py`)
+- Basis UIL uses page-based pagination (page/pageSize) with its own `_paginated_query()` helper
 - Hivestack uses offset-based OData pagination (`_odata()` in `hivestack.py`)
 
 ### Route-level helpers

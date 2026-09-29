@@ -22,7 +22,7 @@
 
 Add a new ad platform mock called AudioWizz to the AdBridge application. Use the API reference at <PASTE_URL_HERE> to understand the platform's endpoints, entities, request/response shapes, pagination style, and authentication model.
 
-Follow the exact patterns established by the existing platform integrations (Basis, DV360, Triton, Hivestack). Specifically:
+Follow the exact patterns established by the existing platform integrations (Basis, DV360, Triton, Hivestack, Radio Workflow). Specifically:
 
 1. Route file — audiowizz.py
 
@@ -53,5 +53,13 @@ Follow the exact patterns established by the existing platform integrations (Bas
 
     Add audiowizz: true under the apis: key.
     Do not modify any existing platform's routes, schema, or seed data. Do not add tests unless I ask. Keep the implementation minimal — only mock what the API reference documents.
+
+---
+
+### Prompt example for Radio Workflow (already added) ###
+
+> Add a new ad platform mock called **Radio Workflow** to the AdBridge application. Use the API reference at `https://api.radioworkflow.com` to understand the platform's endpoints, entities, request/response shapes, pagination style, and authentication model.
+>
+> Radio Workflow is an AI-powered traffic, billing, and production platform for radio stations. The mock covers the Partner API surface including stations, accounts, talent, production orders, logs, ad bank, and more. Route prefix: `/radioworkflow`. Table prefix: `rw_`.
 
 ---

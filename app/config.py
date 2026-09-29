@@ -17,7 +17,7 @@ def get_enabled_apis() -> dict:
     apis = config.get("apis", {})
     # Default all to True if not specified
     return {
-        "basis": apis.get("basis", True),
+        "basiswodh": apis.get("basiswodh", True),
         "dv360": apis.get("dv360", True),
         "triton": apis.get("triton", True),
         "freewheel": apis.get("freewheel", True),
@@ -25,5 +25,6 @@ def get_enabled_apis() -> dict:
         "adswizz": apis.get("adswizz", True),
         "thetradedesk": apis.get("thetradedesk", True),
         "gam": apis.get("gam", True),
-        "basisnet": apis.get("basisnet", True),
+        "basisuil": apis.get("basisuil", True),
+        "radioworkflow": apis.get("radioworkflow", True),
     }

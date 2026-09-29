@@ -6,7 +6,8 @@ A mock API layer for local integration testing against ad-platform APIs. Built w
 
 | Prefix | Platform |
 |---|---|
-| `/basis/v1` | Basis Technologies |
+| `/basiswodh/v1` | Basis Technologies (WODH) |
+| `/basisuil` | Basis DSP (UIL) |
 | `/dv360/v4` | Google Display & Video 360 |
 | `/triton` | Triton Digital Metrics |
 | `/triton-booking` | Triton Digital Booking (TAP) |
@@ -14,12 +15,14 @@ A mock API layer for local integration testing against ad-platform APIs. Built w
 | `/adswizz/v9` | AdsWizz Domain API v9 |
 | `/thetradedesk` | The Trade Desk Platform API v3 |
 | `/gam/v1` | Google Ad Manager REST API v1 |
+| `/radioworkflow` | Radio Workflow Partner API (`https://api.radioworkflow.com`) |
 
 Each platform can be toggled on or off in `config.yml`:
 
 ```yaml
 apis:
-  basis: true
+  basiswodh: true
+  basisuil: true
   dv360: true
   triton: true
   freewheel: true
@@ -243,14 +246,16 @@ If `API_KEY` is blank or unset, all requests pass through without auth.
 │   ├── db_backend.py        # DB abstraction (Postgres/SQLite), connection wrappers
 │   ├── helpers.py           # Pagination and response formatting
 │   └── routes/
-│       ├── basis.py
+│       ├── basiswodh.py
+│       ├── basisuil.py
 │       ├── dv360.py
 │       ├── triton.py
 │       ├── triton_booking.py
 │       ├── hivestack.py
 │       ├── adswizz.py       # AdsWizz Domain API v9
 │       ├── thetradedesk.py
-│       └── gam.py
+│       ├── gam.py
+│       └── radioworkflow.py
 ├── tests/
 ├── config.yml               # Enable/disable platform APIs
 ├── platform_api_sources.yml # Doc/spec URLs each platform mock was built from
@@ -286,7 +291,7 @@ Use this prompt template to add any new ad platform mock. Replace the placeholde
 
 > Add a new ad platform mock called **[PlatformName]** to the AdBridge application. Use the API reference at `<PASTE_URL_HERE>` to understand the platform's endpoints, entities, request/response shapes, pagination style, and authentication model.
 >
-> Follow the exact patterns established by the existing platform integrations (Basis, DV360, Triton, Hivestack, AdsWizz). Specifically:
+> Follow the exact patterns established by the existing platform integrations (Basis WODH, Basis UIL, DV360, Triton, Hivestack, AdsWizz). Specifically:
 >
 > 1. **Route file** — `app/routes/platformname.py`: Create an `APIRouter` with the appropriate prefix. Implement mock CRUD endpoints matching the real API's pagination style and response envelope. Use `_q()`, `Depends(get_db)`, `HTTPException` helpers.
 >
