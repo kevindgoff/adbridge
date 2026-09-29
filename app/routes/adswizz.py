@@ -1,20 +1,51 @@
-"""AdsWizz Domain API v8 mock endpoints under /adswizz/v8.
+"""AdsWizz Domain API v9 mock endpoints under /adswizz/v9.
 
-Mirrors: https://docs.adswizz.com/domain-api/v8/
+Mirrors: https://docs.adswizz.com/domain-api/v9/
+Spec:    https://docs.adswizz.com/domain-api/v9/openapi.json
+(see platform_api_sources.yml for every URL this mock was built from)
+
 Core resources: Agencies, Advertisers, Campaigns, Ads, Orders,
-                Publishers, Zones, Zone Groups, Categories.
+                Publishers, Zones, Zone Groups, Categories, Creatives.
 
 Pagination: page-based (limit + page, default limit=100, page=1).
 Response envelope: bare JSON arrays for lists, plain objects for singles.
 Auth header: agency (required), environment (optional).
+
+Replaces the former v8 mock. v9 deltas vs v8:
+  - Advertiser summaries carry agencyId; create/update require `domain`.
+  - GET /advertisers/{id}/campaigns returns CampaignLightDomain (`objective`
+    object instead of the v7 campaignObjective/objectiveType fields).
+  - campaignType RESERVED removed.
+  - GET /publishers returns PublisherSummaryDomainDto (summary fields only).
+  - Ad types REDIRECT_DAAST / REDIRECT_TARGETSPOT / REDIRECT_VAST_CLIENT
+    removed; VIDEO ads accept `missingCreative`.
+  - New: multipart creative upload, audiogram creatives.
+  - Removed: GET /commons/openrtb-buyers (never mocked).
 """
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Body
+import math
+import uuid
+from datetime import datetime, timedelta
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Body, Header, Response
 from typing import Optional, List
 
 from app.database import get_db
 
-router = APIRouter(prefix="/adswizz/v8")
+router = APIRouter(prefix="/adswizz/v9")
+
+# ── v9 enums ──────────────────────────────────────────────────────────────────
+
+CAMPAIGN_TYPES = {"STANDARD", "FILLER", "INTERACTIVE", "SPONSORSHIP"}
+REMOVED_AD_TYPES = {"REDIRECT_DAAST", "REDIRECT_TARGETSPOT", "REDIRECT_VAST_CLIENT"}
+UPLOAD_EXTENSIONS = {
+    "mp3", "wma", "aac", "ogg", "wav",                           # audio
+    "gif", "jpg", "jpeg", "png",                                 # display
+    "swf", "flv", "f4v", "mp4", "m4v", "3gp", "wmv",             # video
+}
+AUDIOGRAM_AUDIO_EXT = {"mp3", "aac", "ogg", "wav"}
+AUDIOGRAM_DISPLAY_EXT = {"jpg", "jpeg", "gif", "png"}
+MULTIPART_PART_SIZE = 100 * 1024 * 1024  # 100 MiB per part (mock choice)
 
 
 # ── Shared helpers ────────────────────────────────────────────────────────────
@@ -39,6 +70,21 @@ def _paginate(conn, sql, params, limit=100, page=1, order="id"):
 
 def _404(resource, id_):
     raise HTTPException(404, {"code": "not.found", "message": f"{resource} not found: {id_}"})
+
+
+def _400(element, message, code="validation.error"):
+    raise HTTPException(400, {
+        "code": code, "message": message,
+        "errors": [{"code": code, "message": message, "element": element}],
+    })
+
+
+def _agency_id(agency: Optional[str]):
+    """The `agency` header carries the agency id; tolerate non-numeric values."""
+    try:
+        return int(agency) if agency is not None else None
+    except ValueError:
+        return None
 
 
 # ── Agencies ──────────────────────────────────────────────────────────────────
@@ -102,19 +148,26 @@ def list_advertisers(limit: int = Query(100, ge=1, le=1000),
     if name:
         sql += " WHERE name ILIKE %s"
         params.append(f"%{name}%")
-    return _paginate(conn, sql, tuple(params), limit, page)
+    rows = _paginate(conn, sql, tuple(params), limit, page)
+    for r in rows:
+        r["agencyId"] = r.pop("agency_id", None)
+    return rows
 
 
 @router.post("/advertisers")
-def create_advertiser(body: dict = Body(...), conn=Depends(get_db)):
+def create_advertiser(body: dict = Body(...),
+                      agency: Optional[str] = Header(None),
+                      conn=Depends(get_db)):
+    if not body.get("domain"):
+        _400("domain", "domain is required")
     cur = conn.cursor()
     cur.execute(
         """INSERT INTO aw_advertisers (name, domain, contact, email, comments,
-           external_reference, status, ad_clashing, created_at)
-           VALUES (%s,%s,%s,%s,%s,%s,%s,%s, NOW()) RETURNING *""",
+           external_reference, status, ad_clashing, agency_id, created_at)
+           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s, NOW()) RETURNING *""",
         (body["name"], body.get("domain"), body["contact"], body["email"],
          body.get("comments"), body.get("externalReference"),
-         "ACTIVE", body.get("adClashing", False)),
+         "ACTIVE", body.get("adClashing", False), _agency_id(agency)),
     )
     conn.commit()
     return dict(cur.fetchone())
@@ -130,6 +183,8 @@ def get_advertiser(advertiser_id: int, conn=Depends(get_db)):
 
 @router.put("/advertisers/{advertiser_id}")
 def update_advertiser(advertiser_id: int, body: dict = Body(...), conn=Depends(get_db)):
+    if not body.get("domain"):
+        _400("domain", "domain is required")
     row = _one(conn, "SELECT * FROM aw_advertisers WHERE id = %s", (advertiser_id,))
     if not row:
         _404("Advertiser", advertiser_id)
@@ -156,10 +211,36 @@ def list_advertiser_campaigns(advertiser_id: int,
         placeholders = ",".join(["%s"] * len(statuses))
         sql += f" AND status IN ({placeholders})"
         params.extend(statuses)
-    return _paginate(conn, sql, tuple(params), limit, page)
+    rows = _paginate(conn, sql, tuple(params), limit, page)
+    return [_format_campaign_light(r) for r in rows]
 
 
 # ── Campaigns ─────────────────────────────────────────────────────────────────
+
+def _format_campaign_light(row):
+    """CampaignLightDomain (v9): `objective` object replaces v7 objective fields."""
+    return {
+        "id": row["id"],
+        "name": row["name"],
+        "campaignType": row.get("campaign_type"),
+        "advertiserId": row.get("advertiser_id"),
+        "orderId": row.get("order_id"),
+        "status": row.get("status"),
+        "startDate": row.get("start_date"),
+        "endDate": row.get("end_date"),
+        "archived": row.get("archived", False),
+        "objective": {
+            "type": row.get("objective_type"),
+            "value": row.get("objective_value"),
+            "unlimited": row.get("objective_unlimited") or False,
+        },
+    }
+
+
+def _check_campaign_type(body):
+    ctype = body.get("campaignType", "STANDARD")
+    if ctype not in CAMPAIGN_TYPES:
+        _400("campaignType", f"campaignType must be one of {sorted(CAMPAIGN_TYPES)}")
 
 def _format_campaign(row):
     """Nest revenue, objective, and pacing into the AdsWizz response shape."""
@@ -212,6 +293,7 @@ def list_campaigns(limit: int = Query(100, ge=1, le=1000),
 
 @router.post("/campaigns", status_code=201)
 def create_campaign(body: dict = Body(...), conn=Depends(get_db)):
+    _check_campaign_type(body)
     rev = body.get("campaignRevenue", {})
     obj = body.get("objective", {})
     pacing = body.get("campaignDeliveryPacing", {})
@@ -249,6 +331,7 @@ def get_campaign(campaign_id: int, conn=Depends(get_db)):
 
 @router.put("/campaigns/{campaign_id}")
 def update_campaign(campaign_id: int, body: dict = Body(...), conn=Depends(get_db)):
+    _check_campaign_type(body)
     existing = _one(conn, "SELECT * FROM aw_campaigns WHERE id = %s", (campaign_id,))
     if not existing:
         _404("Campaign", campaign_id)
@@ -312,7 +395,7 @@ def unarchive_campaign(campaign_id: int, conn=Depends(get_db)):
 
 def _format_ad(row):
     """Shape flat DB row into AdsWizz ad response."""
-    return {
+    ad = {
         "id": row["id"],
         "campaignId": row["campaign_id"],
         "archived": row.get("archived", False),
@@ -333,6 +416,20 @@ def _format_ad(row):
             "destinationUrl": row.get("destination_url"),
         },
     }
+    if row["type"] == "VIDEO":
+        ad["data"]["missingCreative"] = bool(row.get("missing_creative"))
+    return ad
+
+
+def _check_ad_body(body):
+    if body.get("type") in REMOVED_AD_TYPES:
+        _400("type", f"Ad type {body['type']} is not supported in v9")
+    if body.get("missingCreative"):
+        if body.get("type") != "VIDEO":
+            _400("missingCreative", "missingCreative applies to VIDEO ads only")
+        if not body.get("durationMilliseconds"):
+            _400("durationMilliseconds",
+                 "durationMilliseconds is required when missingCreative is true")
 
 
 @router.get("/ads")
@@ -368,13 +465,15 @@ def list_campaign_ads(campaign_id: int,
 
 @router.post("/campaigns/{campaign_id}/ads", status_code=201)
 def create_ad(campaign_id: int, body: dict = Body(...), conn=Depends(get_db)):
+    _check_ad_body(body)
     cur = conn.cursor()
     cur.execute(
         """INSERT INTO aw_ads
            (campaign_id, name, type, subtype, status, included_in_objective,
             weight, comments, external_reference, tracking_type, tracking,
-            creative_file_name, duration_ms, destination_url, archived, created_at)
-           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,false,NOW())
+            creative_file_name, duration_ms, destination_url, missing_creative,
+            archived, created_at)
+           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,false,NOW())
            RETURNING *""",
         (campaign_id, body["name"], body["type"], body.get("subtype", body["type"]),
          body.get("status", "ACTIVE"),
@@ -382,7 +481,8 @@ def create_ad(campaign_id: int, body: dict = Body(...), conn=Depends(get_db)):
          body.get("weight", 1), body.get("comments"),
          body.get("externalReference"), body.get("trackingType"),
          body.get("tracking"), body.get("creativeFileName"),
-         body.get("durationMilliseconds"), body.get("destinationUrl")),
+         body.get("durationMilliseconds"), body.get("destinationUrl"),
+         bool(body.get("missingCreative", False))),
     )
     conn.commit()
     return _format_ad(dict(cur.fetchone()))
@@ -399,6 +499,7 @@ def get_ad(campaign_id: int, ad_id: int, conn=Depends(get_db)):
 
 @router.put("/campaigns/{campaign_id}/ads/{ad_id}")
 def update_ad(campaign_id: int, ad_id: int, body: dict = Body(...), conn=Depends(get_db)):
+    _check_ad_body(body)
     existing = _one(conn, "SELECT * FROM aw_ads WHERE id = %s AND campaign_id = %s",
                     (ad_id, campaign_id))
     if not existing:
@@ -406,13 +507,16 @@ def update_ad(campaign_id: int, ad_id: int, body: dict = Body(...), conn=Depends
     _q(conn,
         """UPDATE aw_ads SET name=%s, status=%s, weight=%s, comments=%s,
            external_reference=%s, tracking_type=%s, tracking=%s,
-           creative_file_name=%s, duration_ms=%s, destination_url=%s
+           creative_file_name=%s, duration_ms=%s, destination_url=%s,
+           missing_creative=%s
            WHERE id=%s""",
         (body["name"], body.get("status", "ACTIVE"), body.get("weight", 1),
          body.get("comments"), body.get("externalReference"),
          body.get("trackingType"), body.get("tracking"),
          body.get("creativeFileName"), body.get("durationMilliseconds"),
-         body.get("destinationUrl"), ad_id))
+         body.get("destinationUrl"),
+         bool(body.get("missingCreative", existing.get("missing_creative") or False)),
+         ad_id))
     conn.commit()
     return _format_ad(dict(_one(conn, "SELECT * FROM aw_ads WHERE id = %s", (ad_id,))))
 
@@ -536,7 +640,11 @@ def list_order_campaigns(order_id: int,
 def list_publishers(limit: int = Query(100, ge=1, le=1000),
                     page: int = Query(1, ge=1),
                     conn=Depends(get_db)):
-    return _paginate(conn, "SELECT * FROM aw_publishers", (), limit, page)
+    """PublisherSummaryDomainDto: summary fields only in v9."""
+    rows = _paginate(conn, "SELECT * FROM aw_publishers", (), limit, page)
+    return [{"id": r["id"], "name": r["name"], "contact": r.get("contact"),
+             "website": r.get("website"), "email": r.get("email"),
+             "externalref": r.get("external_reference")} for r in rows]
 
 
 @router.post("/publishers")
@@ -750,3 +858,143 @@ def upload_creative(conn=Depends(get_db)):
 def list_targeting_zones(conn=Depends(get_db)):
     rows = _q(conn, "SELECT id, name, description FROM aw_zones ORDER BY id LIMIT 100").fetchall()
     return [dict(r) for r in rows]
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# New in v9
+# ═══════════════════════════════════════════════════════════════════════════
+
+# ── Creatives: multipart upload ──────────────────────────────────────────────
+
+@router.post("/creatives/uploads/presignedurl")
+def create_multipart_upload(body: dict = Body(...), conn=Depends(get_db)):
+    file_name = body.get("fileName")
+    size = body.get("sizeBytes")
+    if not file_name:
+        _400("fileName", "fileName is required")
+    if not isinstance(size, int) or size <= 0:
+        _400("sizeBytes", "sizeBytes must be a positive integer")
+    ext = file_name.rsplit(".", 1)[-1].lower() if "." in file_name else ""
+    if ext not in UPLOAD_EXTENSIONS:
+        _400("fileName", f"Unsupported file extension: {ext or '(none)'}")
+
+    upload_id = str(uuid.uuid4())
+    parts = max(1, math.ceil(size / MULTIPART_PART_SIZE))
+    expires_at = (datetime.utcnow() + timedelta(hours=1)).isoformat() + "Z"
+    _q(conn,
+       """INSERT INTO aw_multipart_uploads
+          (upload_id, file_name, size_bytes, parts, status, expires_at, created_at)
+          VALUES (%s,%s,%s,%s,'INITIATED',%s,NOW())""",
+       (upload_id, file_name, size, parts, expires_at))
+    conn.commit()
+
+    urls = []
+    for n in range(1, parts + 1):
+        start = (n - 1) * MULTIPART_PART_SIZE
+        end = min(n * MULTIPART_PART_SIZE, size) - 1
+        urls.append({
+            "partNumber": n,
+            "url": f"https://mock.adbridge.local/adswizz/uploads/{upload_id}/parts/{n}",
+            "rangeStart": start,
+            "rangeEnd": end,
+        })
+    return {"uploadId": upload_id, "parts": parts, "urls": urls, "expiresAt": expires_at}
+
+
+@router.post("/creatives/uploads/complete")
+def complete_multipart_upload(body: dict = Body(...), conn=Depends(get_db)):
+    upload_id = body.get("uploadId")
+    parts = body.get("parts")
+    if not upload_id:
+        _400("uploadId", "uploadId is required")
+    if not isinstance(parts, list) or not parts:
+        _400("parts", "parts is required")
+    upload = _one(conn, "SELECT * FROM aw_multipart_uploads WHERE upload_id = %s", (upload_id,))
+    if not upload or upload["status"] != "INITIATED":
+        _400("uploadId", f"Unknown or already completed upload: {upload_id}")
+    numbers = sorted(p.get("partNumber") for p in parts if p.get("etag"))
+    if numbers != list(range(1, upload["parts"] + 1)):
+        _400("parts", f"Expected an etag for each of parts 1..{upload['parts']}")
+
+    creative_identifier = f"_ad_{uuid.uuid4()}"
+    _q(conn,
+       """UPDATE aw_multipart_uploads SET status = 'COMPLETED', creative_identifier = %s
+          WHERE upload_id = %s""",
+       (creative_identifier, upload_id))
+    conn.commit()
+    return {"creativeIdentifier": creative_identifier}
+
+
+# ── Creatives: audiogram ─────────────────────────────────────────────────────
+
+def _format_light_creative(row):
+    return {"id": row["id"], "creativeName": row["creative_name"], "status": row["status"]}
+
+
+def _get_audiogram(conn, creative_id):
+    row = _one(conn, "SELECT * FROM aw_audiogram_creatives WHERE id = %s", (creative_id,))
+    if not row:
+        _404("Creative", creative_id)
+    return row
+
+
+@router.post("/creatives/{advertiser_id}/audiogram", status_code=201)
+def create_audiogram(advertiser_id: int, body: dict = Body(...), conn=Depends(get_db)):
+    for field in ("creativeName", "audioCreativeIdentifier", "audioFileExtension",
+                  "displayCreativeIdentifier", "displayFileExtension"):
+        if not body.get(field):
+            _400(field, f"{field} is required")
+    if body["audioFileExtension"].lower() not in AUDIOGRAM_AUDIO_EXT:
+        _400("audioFileExtension", f"Supported audio extensions: {sorted(AUDIOGRAM_AUDIO_EXT)}")
+    if body["displayFileExtension"].lower() not in AUDIOGRAM_DISPLAY_EXT:
+        _400("displayFileExtension",
+             f"Supported display extensions: {sorted(AUDIOGRAM_DISPLAY_EXT)}")
+    if not _one(conn, "SELECT id FROM aw_advertisers WHERE id = %s", (advertiser_id,)):
+        _404("Advertiser", advertiser_id)
+
+    cur = conn.cursor()
+    cur.execute(
+        """INSERT INTO aw_audiogram_creatives
+           (advertiser_id, creative_name, audio_creative_identifier, audio_file_extension,
+            display_creative_identifier, display_file_extension, status, created_at)
+           VALUES (%s,%s,%s,%s,%s,%s,'PROCESSING',NOW()) RETURNING *""",
+        (advertiser_id, body["creativeName"], body["audioCreativeIdentifier"],
+         body["audioFileExtension"].lower(), body["displayCreativeIdentifier"],
+         body["displayFileExtension"].lower()),
+    )
+    conn.commit()
+    return _format_light_creative(dict(cur.fetchone()))
+
+
+@router.get("/creatives/audiogram/{creative_id}")
+def get_audiogram_status(creative_id: int, conn=Depends(get_db)):
+    """Mock async processing: a PROCESSING creative is PUBLISHED on the first poll."""
+    row = _get_audiogram(conn, creative_id)
+    if row["status"] == "PROCESSING":
+        _q(conn, "UPDATE aw_audiogram_creatives SET status = 'PUBLISHED' WHERE id = %s",
+           (creative_id,))
+        conn.commit()
+        row["status"] = "PUBLISHED"
+    return _format_light_creative(row)
+
+
+@router.patch("/creatives/audiogram/{creative_id}")
+def patch_audiogram(creative_id: int, body: dict = Body(...), conn=Depends(get_db)):
+    if not body.get("creativeName"):
+        _400("creativeName", "creativeName is required")
+    _get_audiogram(conn, creative_id)
+    _q(conn, "UPDATE aw_audiogram_creatives SET creative_name = %s WHERE id = %s",
+       (body["creativeName"], creative_id))
+    conn.commit()
+    return _format_light_creative(_get_audiogram(conn, creative_id))
+
+
+@router.delete("/creatives/audiogram/{creative_id}", status_code=204)
+def delete_audiogram(creative_id: int, conn=Depends(get_db)):
+    row = _get_audiogram(conn, creative_id)
+    if row["status"] not in ("FAILED", "PUBLISHED"):
+        _400("status", "Only FAILED or PUBLISHED audiogram creatives can be deleted",
+             code="invalid.status")
+    _q(conn, "DELETE FROM aw_audiogram_creatives WHERE id = %s", (creative_id,))
+    conn.commit()
+    return Response(status_code=204)

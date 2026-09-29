@@ -867,7 +867,7 @@ CREATE TABLE IF NOT EXISTS hs_event_data (
     UNIQUE (event_id, entity_type, entity_id)
 );
 
--- ==================== AdsWizz Domain API v8 Tables ====================
+-- ==================== AdsWizz Domain API v9 Tables ====================
 
 CREATE TABLE IF NOT EXISTS aw_agencies (
     id SERIAL PRIMARY KEY,
@@ -891,6 +891,7 @@ CREATE TABLE IF NOT EXISTS aw_advertisers (
     external_reference TEXT,
     status TEXT NOT NULL DEFAULT 'ACTIVE',
     ad_clashing BOOLEAN DEFAULT FALSE,
+    agency_id INTEGER,
     created_at TEXT NOT NULL
 );
 
@@ -952,6 +953,7 @@ CREATE TABLE IF NOT EXISTS aw_ads (
     creative_file_name TEXT,
     duration_ms INTEGER,
     destination_url TEXT,
+    missing_creative BOOLEAN DEFAULT FALSE,
     archived BOOLEAN DEFAULT FALSE,
     created_at TEXT NOT NULL
 );
@@ -1004,6 +1006,31 @@ CREATE TABLE IF NOT EXISTS aw_categories (
     name TEXT NOT NULL,
     description TEXT,
     parent_id INTEGER REFERENCES aw_categories(id)
+);
+
+-- ==================== AdsWizz Domain API v9 additions ====================
+
+CREATE TABLE IF NOT EXISTS aw_multipart_uploads (
+    upload_id TEXT PRIMARY KEY,
+    file_name TEXT NOT NULL,
+    size_bytes BIGINT NOT NULL,
+    parts INTEGER NOT NULL,
+    status TEXT NOT NULL DEFAULT 'INITIATED',
+    creative_identifier TEXT,
+    expires_at TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS aw_audiogram_creatives (
+    id SERIAL PRIMARY KEY,
+    advertiser_id INTEGER NOT NULL REFERENCES aw_advertisers(id),
+    creative_name TEXT NOT NULL,
+    audio_creative_identifier TEXT NOT NULL,
+    audio_file_extension TEXT NOT NULL,
+    display_creative_identifier TEXT NOT NULL,
+    display_file_extension TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'PROCESSING',
+    created_at TEXT NOT NULL
 );
 
 -- ==================== The Trade Desk (TTD) v3 Tables ====================
@@ -2623,8 +2650,32 @@ def _seed_hivestack(cur, now):
                     (lid, unit_ids[i % len(unit_ids)]))
 
 
+def _migrate_adswizz_v9(cur):
+    """Add v9 columns to AdsWizz tables created by an older schema.
+
+    CREATE TABLE IF NOT EXISTS never alters an existing table, so a database
+    seeded before v9 support lacks these columns. Postgres supports
+    ADD COLUMN IF NOT EXISTS; SQLite does not, so check PRAGMA table_info.
+    """
+    from app.db_backend import BACKEND
+
+    new_columns = [
+        ("aw_advertisers", "agency_id", "INTEGER"),
+        ("aw_ads", "missing_creative", "BOOLEAN DEFAULT FALSE"),
+    ]
+    for table, column, ddl in new_columns:
+        if BACKEND == "sqlite":
+            cur.execute(f"PRAGMA table_info({table})")
+            if any(r["name"] == column for r in cur.fetchall()):
+                continue
+            cur.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
+        else:
+            cur.execute(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column} {ddl}")
+
+
 def _seed_adswizz(cur, now):
-    """Seed AdsWizz Domain API v8 mock data."""
+    """Seed AdsWizz Domain API v9 mock data."""
+    _migrate_adswizz_v9(cur)
     cur.execute("SELECT COUNT(*) FROM aw_agencies")
     if cur.fetchone()["count"] > 0:
         return
@@ -2649,11 +2700,12 @@ def _seed_adswizz(cur, now):
         ("SonicBrand Media", "www.sonicbrand.com", "Leo Diaz", "leo@sonicbrand.com"),
     ]
     adv_ids = []
-    for name, domain, contact, email in adv_data:
+    for i, (name, domain, contact, email) in enumerate(adv_data):
         cur.execute(
-            "INSERT INTO aw_advertisers (name, domain, contact, email, status, ad_clashing, created_at) "
-            "VALUES (%s,%s,%s,%s,'ACTIVE',false,%s) RETURNING id",
-            (name, domain, contact, email, now))
+            "INSERT INTO aw_advertisers (name, domain, contact, email, status, ad_clashing, "
+            "agency_id, created_at) "
+            "VALUES (%s,%s,%s,%s,'ACTIVE',false,%s,%s) RETURNING id",
+            (name, domain, contact, email, agency_ids[i % len(agency_ids)], now))
         adv_ids.append(cur.fetchone()["id"])
 
     # --- Orders ---
@@ -2785,6 +2837,17 @@ def _seed_adswizz(cur, now):
             cur.execute(
                 "INSERT INTO aw_categories (name, description, parent_id) VALUES (%s,%s,%s)",
                 (sub, f"Subcategory of {pname}", pid))
+
+    # --- v9: Audiogram creatives ---
+    for i, (cname, status) in enumerate([("Spring Audiogram", "PUBLISHED"),
+                                          ("Summer Audiogram", "PROCESSING")]):
+        cur.execute(
+            "INSERT INTO aw_audiogram_creatives "
+            "(advertiser_id, creative_name, audio_creative_identifier, audio_file_extension, "
+            "display_creative_identifier, display_file_extension, status, created_at) "
+            "VALUES (%s,%s,%s,'mp3',%s,'png',%s,%s)",
+            (adv_ids[i % len(adv_ids)], cname,
+             f"_ad_{_uuid()}", f"_ad_{_uuid()}", status, now))
 
 
 def _seed_thetradedesk(cur, now):

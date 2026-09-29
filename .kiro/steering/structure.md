@@ -14,7 +14,7 @@
 │       ├── triton.py        # /triton endpoints (metrics)
 │       ├── triton_booking.py# /triton-booking endpoints (TAP)
 │       ├── hivestack.py     # /hivestack endpoints (DOOH)
-│       ├── adswizz.py       # /adswizz/v8 endpoints
+│       ├── adswizz.py       # /adswizz/v9 endpoints
 │       ├── thetradedesk.py  # /thetradedesk endpoints (TTD v3)
 │       ├── gam.py           # /gam/v1 endpoints (Google Ad Manager)
 │       └── radioworkflow.py # /radioworkflow endpoints (Radio Workflow Partner API)

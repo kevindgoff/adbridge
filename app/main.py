@@ -26,7 +26,7 @@ tags_metadata = [
     {"name": "/triton", "description": "Triton Digital Metrics API mock endpoints"},
     {"name": "/triton-booking", "description": "Triton Digital Booking (TAP) API mock endpoints"},
     {"name": "/hivestack", "description": "Hivestack OpenRTB 2.5 DOOH API mock endpoints"},
-    {"name": "/adswizz", "description": "AdsWizz Domain API v8 mock endpoints"},
+    {"name": "/adswizz", "description": "AdsWizz Domain API v9 mock endpoints"},
     {"name": "/thetradedesk", "description": "The Trade Desk Platform API v3 mock endpoints"},
     {"name": "/gam", "description": "Google Ad Manager REST API v1 mock endpoints"},
     {"name": "/basisuil", "description": "Basis DSP API mock endpoints"},
