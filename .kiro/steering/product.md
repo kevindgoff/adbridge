@@ -20,6 +20,7 @@ AdBridge is a mock API layer for local integration testing against ad-platform A
 | `/thetradedesk` | The Trade Desk Platform API v3 |
 | `/gam/v1` | Google Ad Manager REST API v1 |
 | `/radioworkflow` | Radio Workflow Partner API (`https://api.radioworkflow.com`) |
+| `/stackadapt` | StackAdapt GraphQL DSP API (`https://api.stackadapt.com/graphql`) |
 
 Each platform can be toggled on/off in `config.yml` under `apis:`.
 

@@ -16,6 +16,7 @@ A mock API layer for local integration testing against ad-platform APIs. Built w
 | `/thetradedesk` | The Trade Desk Platform API v3 |
 | `/gam/v1` | Google Ad Manager REST API v1 |
 | `/radioworkflow` | Radio Workflow Partner API (`https://api.radioworkflow.com`) |
+| `/stackadapt` | StackAdapt GraphQL DSP API (`https://api.stackadapt.com/graphql`) |
 
 Each platform can be toggled on or off in `config.yml`:
 
@@ -30,6 +31,8 @@ apis:
   adswizz: true
   thetradedesk: true
   gam: true
+  radioworkflow: true
+  stackadapt: true
 ```
 
 ---
@@ -255,7 +258,8 @@ If `API_KEY` is blank or unset, all requests pass through without auth.
 │       ├── adswizz.py       # AdsWizz Domain API v9
 │       ├── thetradedesk.py
 │       ├── gam.py
-│       └── radioworkflow.py
+│       ├── radioworkflow.py
+│       └── stackadapt.py    # StackAdapt GraphQL DSP API
 ├── tests/
 ├── config.yml               # Enable/disable platform APIs
 ├── platform_api_sources.yml # Doc/spec URLs each platform mock was built from

@@ -17,7 +17,8 @@
 │       ├── adswizz.py       # /adswizz/v9 endpoints
 │       ├── thetradedesk.py  # /thetradedesk endpoints (TTD v3)
 │       ├── gam.py           # /gam/v1 endpoints (Google Ad Manager)
-│       └── radioworkflow.py # /radioworkflow endpoints (Radio Workflow Partner API)
+│       ├── radioworkflow.py # /radioworkflow endpoints (Radio Workflow Partner API)
+│       └── stackadapt.py    # /stackadapt endpoints (StackAdapt GraphQL DSP)
 ├── tests/
 │   ├── test_all_routes.py   # Static analysis: checks psycopg2 patterns across all routes
 │   └── test_basis.py        # Basis-specific placeholder checks
@@ -35,6 +36,7 @@ Each ad platform gets its own file in `app/routes/`. The router is conditionally
 
 **Platform API URLs:**
 - Radio Workflow: `https://api.radioworkflow.com`
+- StackAdapt: `https://api.stackadapt.com/graphql`
 
 ### Database access
 - No ORM — raw SQL with psycopg2 and `%s` placeholders (never `?`)
