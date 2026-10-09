@@ -31,6 +31,7 @@ tags_metadata = [
     {"name": "/gam", "description": "Google Ad Manager REST API v1 mock endpoints"},
     {"name": "/basisuil", "description": "Basis DSP API mock endpoints"},
     {"name": "/radioworkflow", "description": "Radio Workflow Partner API mock endpoints"},
+    {"name": "/stackadapt", "description": "StackAdapt GraphQL DSP API mock endpoint"},
 ]
 
 app = FastAPI(
@@ -81,6 +82,10 @@ if _enabled.get("basisuil"):
 if _enabled.get("radioworkflow"):
     from app.routes.radioworkflow import router as radioworkflow_router
     app.include_router(radioworkflow_router, tags=["/radioworkflow"])
+
+if _enabled.get("stackadapt"):
+    from app.routes.stackadapt import router as stackadapt_router
+    app.include_router(stackadapt_router, tags=["/stackadapt"])
 
 
 @app.on_event("startup")

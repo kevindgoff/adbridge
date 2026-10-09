@@ -27,4 +27,5 @@ def get_enabled_apis() -> dict:
         "gam": apis.get("gam", True),
         "basisuil": apis.get("basisuil", True),
         "radioworkflow": apis.get("radioworkflow", True),
+        "stackadapt": apis.get("stackadapt", True),
     }

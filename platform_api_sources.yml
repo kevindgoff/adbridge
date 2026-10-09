@@ -30,3 +30,18 @@ platforms:
   hivestack:
     module: app/routes/hivestack.py
     base_url: https://apps.hivestack.com/api/v2/
+
+  stackadapt:
+    module: app/routes/stackadapt.py
+    mock_prefix: /stackadapt
+    docs: https://docs.stackadapt.com/graphql/reference
+    # Authoritative reference used to build this mock: the OFFICIAL StackAdapt
+    # GraphQL SDL (login-gated on the docs site), supplied by the user and saved
+    # locally. The mock's operation names, inputs, and payload envelopes are
+    # reconciled against it (upsertCampaign/CampaignInput channel blocks,
+    # createCampaignGroup/updateCampaignGroup, campaignDelivery payload union,
+    # Relay-style userErrors, etc.).
+    spec: stackadapt_public_schema.graphql  # official SDL (local copy)
+    base_url: https://api.stackadapt.com/graphql
+    auth_header: X-Authorization
+    retrieved: 2026-10-09

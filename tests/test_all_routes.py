@@ -12,6 +12,7 @@ ROUTE_FILES = [
     "app/routes/hivestack.py",
     "app/routes/adswizz.py",
     "app/routes/basisuil.py",
+    "app/routes/stackadapt.py",
 ]
 
 

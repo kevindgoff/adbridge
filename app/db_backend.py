@@ -291,7 +291,7 @@ def init_db():
         _seed_core, _seed_dv360, _seed_triton_booking,
         _seed_triton, _seed_hivestack, _seed_adswizz,
         _seed_thetradedesk, _seed_gam, _seed_basisuil,
-        _seed_radioworkflow, _now,
+        _seed_radioworkflow, _seed_stackadapt, _now,
     )
 
     conn = get_connection()
@@ -316,6 +316,7 @@ def init_db():
     _seed_gam(cur, now)
     _seed_basisuil(cur, now)
     _seed_radioworkflow(cur, now)
+    _seed_stackadapt(cur, now)
 
     conn.commit()
     cur.close()

@@ -1570,6 +1570,59 @@ CREATE TABLE IF NOT EXISTS rw_network_dubs (
     advertiser TEXT,
     status TEXT DEFAULT 'active'
 );
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- StackAdapt (GraphQL DSP) — sa_* tables
+-- Mirrors the official StackAdapt GraphQL schema: Advertiser → CampaignGroup →
+-- Campaign (channel-typed), with per-day delivery stats backing the delivery
+-- report queries. String UUID-style primary keys, ISO 8601 timestamps.
+-- ═══════════════════════════════════════════════════════════════════════════
+CREATE TABLE IF NOT EXISTS sa_advertisers (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    description TEXT,
+    is_archived BOOLEAN DEFAULT FALSE
+);
+
+CREATE TABLE IF NOT EXISTS sa_campaign_groups (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    advertiser_id TEXT REFERENCES sa_advertisers(id),
+    status TEXT DEFAULT 'ACTIVE',
+    budget_type TEXT DEFAULT 'COST',
+    budget_rollover BOOLEAN DEFAULT FALSE,
+    is_archived BOOLEAN DEFAULT FALSE,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS sa_campaigns (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    channel TEXT NOT NULL DEFAULT 'NATIVE',
+    status TEXT DEFAULT 'DRAFT',
+    is_draft BOOLEAN DEFAULT FALSE,
+    is_archived BOOLEAN DEFAULT FALSE,
+    goal_type TEXT,
+    advertiser_id TEXT REFERENCES sa_advertisers(id),
+    campaign_group_id TEXT REFERENCES sa_campaign_groups(id),
+    timezone TEXT DEFAULT 'America/New_York',
+    created_at TEXT NOT NULL,
+    updated_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS sa_delivery_stats (
+    id SERIAL PRIMARY KEY,
+    campaign_id TEXT REFERENCES sa_campaigns(id),
+    campaign_group_id TEXT REFERENCES sa_campaign_groups(id),
+    advertiser_id TEXT REFERENCES sa_advertisers(id),
+    stat_date TEXT NOT NULL,
+    impressions INTEGER DEFAULT 0,
+    clicks INTEGER DEFAULT 0,
+    conversions DOUBLE PRECISION DEFAULT 0,
+    cost DOUBLE PRECISION DEFAULT 0,
+    revenue DOUBLE PRECISION DEFAULT 0,
+    atos DOUBLE PRECISION DEFAULT 0
+);
 """
 
 
@@ -3632,3 +3685,81 @@ def _seed_radioworkflow(cur, now):
                 network_advertisers[i % len(network_advertisers)],
                 "active",
             ))
+
+
+def _seed_stackadapt(cur, now):
+    """Seed StackAdapt GraphQL DSP mock data.
+
+    Idempotent: guarded by a COUNT(*) on sa_advertisers so re-runs on every
+    startup (per init_db's design) do not duplicate rows. Builds a small
+    Advertiser → CampaignGroup → Campaign tree across StackAdapt's channel
+    types, plus 30 days of per-campaign delivery stats to back the delivery
+    report queries (campaignDelivery / campaignGroupDelivery / advertiserDelivery).
+    """
+    cur.execute("SELECT COUNT(*) AS count FROM sa_advertisers")
+    if cur.fetchone()["count"] > 0:
+        return
+
+    import random as _random
+
+    # --- Advertisers (sub-advertiser brands) ---
+    advertisers = [
+        ("sa-adv-001", "Northwind Retail", "Northwind omni-channel retail"),
+        ("sa-adv-002", "Helios Travel", "Helios travel & hospitality"),
+    ]
+    for aid, name, desc in advertisers:
+        cur.execute(
+            "INSERT INTO sa_advertisers (id, name, description, is_archived) "
+            "VALUES (%s,%s,%s,FALSE)", (aid, name, desc))
+
+    # --- Campaign groups (line items) ---
+    groups = [
+        ("sa-g-001", "sa-adv-001", "Northwind Q4 Prospecting", "COST"),
+        ("sa-g-002", "sa-adv-001", "Northwind Retargeting", "COST"),
+        ("sa-g-003", "sa-adv-002", "Helios Summer Launch", "IMP"),
+    ]
+    for gid, aid, name, budget_type in groups:
+        cur.execute(
+            "INSERT INTO sa_campaign_groups "
+            "(id, name, advertiser_id, status, budget_type, budget_rollover, "
+            " is_archived, created_at) VALUES (%s,%s,%s,'ACTIVE',%s,FALSE,FALSE,%s)",
+            (gid, name, aid, budget_type, now))
+
+    # --- Campaigns (channel-typed) ---
+    channels = ["NATIVE", "DISPLAY", "VIDEO", "CTV", "AUDIO", "DOOH"]
+    goal_types = ["CONVERSION", "ENGAGEMENT"]
+    statuses = ["ACTIVE", "PAUSED", "PENDING"]
+    campaigns = []
+    counter = 1
+    for gid, aid, gname, _bt in groups:
+        for j in range(3):
+            cid = f"sa-c-{counter:04d}"
+            counter += 1
+            channel = channels[(counter + j) % len(channels)]
+            campaigns.append((cid, gid, aid, channel))
+            cur.execute(
+                "INSERT INTO sa_campaigns "
+                "(id, name, channel, status, is_draft, is_archived, goal_type, "
+                " advertiser_id, campaign_group_id, timezone, created_at, updated_at) "
+                "VALUES (%s,%s,%s,%s,FALSE,FALSE,%s,%s,%s,'America/New_York',%s,%s)",
+                (cid, f"{gname} — {channel.title()} {j+1}", channel,
+                 statuses[j % len(statuses)], goal_types[j % len(goal_types)],
+                 aid, gid, now, now))
+
+    # --- Delivery stats: 30 daily rows per campaign ---
+    for cid, gid, aid, _channel in campaigns:
+        for d in range(30):
+            stat_date = _past_date(29 - d)
+            impressions = _random.randint(5000, 80000)
+            clicks = int(impressions * _random.uniform(0.001, 0.02))
+            conversions = round(clicks * _random.uniform(0.01, 0.08), 2)
+            cost = round(impressions / 1000 * _random.uniform(2.0, 9.0), 2)
+            revenue = round(conversions * _random.uniform(20.0, 120.0), 2)
+            atos = round(_random.uniform(15.0, 180.0), 1)
+            cur.execute(
+                "INSERT INTO sa_delivery_stats "
+                "(campaign_id, campaign_group_id, advertiser_id, stat_date, "
+                " impressions, clicks, conversions, cost, revenue, atos) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                (cid, gid, aid, stat_date, impressions, clicks,
+                 conversions, cost, revenue, atos))
