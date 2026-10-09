@@ -45,3 +45,13 @@ platforms:
     base_url: https://api.stackadapt.com/graphql
     auth_header: X-Authorization
     retrieved: 2026-10-09
+
+  dv360:
+    module: app/routes/dv360.py
+    mock_prefix: /dv360/v4
+    docs: https://developers.google.com/display-video/api/reference/rest
+    base_url: https://displayvideo.googleapis.com/v4
+    # Delivery reporting mirrors the Bid Manager API (queries + reports).
+    reporting_docs: https://developers.google.com/bid-manager/reference/rest
+    reporting_base_url: https://doubleclickbidmanager.googleapis.com/v2
+    retrieved: 2026-10-09
