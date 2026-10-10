@@ -9,31 +9,237 @@ VERBATIM under the AdBridge prefix /freewheel:
     real /services/v3/campaign       -> mock /freewheel/services/v3/campaign
     real /reporting/v1/job/{id}      -> mock /freewheel/reporting/v1/job/{id}
 
+RESPONSE FORMAT (XML / JSON content negotiation):
+  The authoritative specs declare the response media type per operation. The
+  v3 /services/v3 surface is predominantly `application/xml`; a subset of v4
+  operations (creative-instance metrics, proposed IO/placement/ad) declare BOTH
+  application/json AND application/xml; the rest declare application/json or
+  `*/*` (unpinned). This mock mirrors that faithfully via a custom route class
+  (_ContentNegotiatedRoute) driven by the per-operation map _XML_DEFAULT_OPS /
+  _DUAL_OPS below:
+    * xml-only operations  -> serve XML unless the client sends Accept: application/json
+    * json+xml operations  -> serve JSON unless the client sends Accept: application/xml
+    * everything else      -> JSON
+  Handlers always build and return plain dicts (so the JSON path and the
+  generated OpenAPI schema are unchanged); the route class transcodes the
+  serialized body to XML only when negotiation selects it. XML uses a
+  deterministic convention (dict keys -> elements, lists -> repeated singularised
+  item elements), since the specs carry no OpenAPI `xml` element metadata.
+
 Documented divergences from the real API (see platform_api_sources.yml):
   * AUTH: real Freewheel uses session-token auth; this mock normalises to the
     repo-wide X-API-Key gate (app/main.py), like every other AdBridge mock.
-  * PLACEMENT API: the authoritative placement-api-v3 spec is XML (the companion
-    placement-api-v3.json has a null `paths`). This mock serves JSON request/
-    response bodies instead, matching the JSON convention of the rest of AdBridge.
+  * XML SHAPE: real Freewheel's exact XML element/attribute layout is not pinned
+    in the specs (no OpenAPI `xml` objects); this mock emits a conventional
+    field-mirrors-element XML, not byte-identical to production XML.
   * ASYNC REPORTING: the audience reporting GETs return a real HTTP 202 + job
     handle; the job is marked COMPLETED immediately so the first poll of
     GET /reporting/v1/job/{job_id} returns 200 with rows. Real Freewheel runs the
     job asynchronously and the first poll may return a still-pending status.
-  * RESPONSE SHAPES: where the spec leaves a 200 body unspecified, the created/
-    updated resource object is returned directly (no house envelope) so paths
-    match real clients.
+    Reporting responses are JSON (the reporting spec declares application/json).
 """
 
 import json
 import uuid
 from typing import Optional
+from xml.sax.saxutils import escape as _xml_escape
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Query, Response
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import JSONResponse
+from fastapi.routing import APIRoute
 
 from app.database import get_db
 
 router = APIRouter(prefix="/freewheel")
+
+
+# ── Content negotiation (XML / JSON) ────────────────────────────────────────
+#
+# The authoritative Freewheel OpenAPI specs declare the response media type per
+# operation. The v3 /services/v3 surface is predominantly `application/xml` on
+# reads and several writes; a subset of v4 operations (creative-instance metrics,
+# proposed IO/placement/ad) declare BOTH application/json AND application/xml.
+# The remaining v4 operations declare application/json or `*/*` (unpinned).
+#
+# This mock honours that per-operation default while remaining content-negotiable:
+#   * default="xml"  -> serve XML unless the client sends `Accept: application/json`
+#   * default="json" -> serve JSON unless the client sends `Accept: application/xml`
+# so a client written against real Freewheel's v3 XML works out of the box, and a
+# JSON-only test harness can still force JSON with an Accept header.
+#
+# The specs carry no OpenAPI `xml` object metadata (no custom element names or
+# wrapping hints), so XML is emitted with a deterministic convention: dict keys
+# become child elements, lists repeat a singularised item element, and scalars are
+# text. This matches real Freewheel's element-mirrors-field XML shape.
+
+_XML_DECL = '<?xml version="1.0" encoding="UTF-8"?>'
+
+# Authoritative per-operation response media types, derived from the specs.
+# (METHOD, path-suffix-after-/freewheel). XML-only ops default to XML; dual ops
+# default to JSON and switch to XML on Accept: application/xml. The IO dual-path
+# (insertion_order vs insertion_orders) is normalised below so both forms match.
+_XML_DEFAULT_OPS = {
+    ("DELETE", "/services/v3/advertisers/{advertiser_id}/brands/{brand_id}"),
+    ("GET", "/services/v3/advertisers"),
+    ("GET", "/services/v3/advertisers/{advertiser_id}/brands"),
+    ("GET", "/services/v3/advertisers/{advertiser_id}/brands/{brand_id}"),
+    ("GET", "/services/v3/advertisers/{advertiser_id}/parent_agencies"),
+    ("GET", "/services/v3/agencies"),
+    ("GET", "/services/v3/agencies/{agency_id}"),
+    ("GET", "/services/v3/agencies/{agency_id}/child_advertisers"),
+    ("GET", "/services/v3/agencies/{agency_id}/child_agencies"),
+    ("GET", "/services/v3/agencies/{agency_id}/parent_agencies"),
+    ("GET", "/services/v3/campaign/{campaign_id}"),
+    ("GET", "/services/v3/campaign/{campaign_id}/insertion_orders"),
+    ("GET", "/services/v3/campaigns"),
+    ("GET", "/services/v3/insertion_order/{insertion_order_id}/placements"),
+    ("GET", "/services/v3/insertion_orders"),
+    ("GET", "/services/v3/placement/{placement_id}"),
+    ("GET", "/services/v3/placements"),
+    ("POST", "/services/v3/advertisers"),
+    ("POST", "/services/v3/advertisers/{advertiser_id}/brands"),
+    ("POST", "/services/v3/campaign/{campaign_id}/insertion_order"),
+    ("PUT", "/services/v3/advertisers/{advertiser_id}"),
+    ("PUT", "/services/v3/advertisers/{advertiser_id}/activate"),
+    ("PUT", "/services/v3/advertisers/{advertiser_id}/brands/{brand_id}"),
+    ("PUT", "/services/v3/advertisers/{advertiser_id}/deactivate"),
+    ("PUT", "/services/v3/agencies/{agency_id}"),
+    ("PUT", "/services/v3/agencies/{agency_id}/activate_relationships"),
+    ("PUT", "/services/v3/agencies/{agency_id}/add_relationships"),
+    ("PUT", "/services/v3/agencies/{agency_id}/deactivate_relationships"),
+    # IO update: spec path is insertion_order(s); both singular/plural map here.
+    ("PUT", "/services/v3/insertion_order/{insertion_order_id}"),
+    ("PUT", "/services/v3/insertion_orders/{insertion_order_id}"),
+    ("PUT", "/services/v3/insertion_order/{insertion_order_id}/unbook"),
+    ("PUT", "/services/v3/placement/{placement_id}"),
+    ("PUT", "/services/v3/placement/{placement_id}/activate"),
+    ("PUT", "/services/v3/placement/{placement_id}/cancel"),
+    ("PUT", "/services/v3/placement/{placement_id}/deactivate"),
+    ("PUT", "/services/v3/placement/{placement_id}/extend"),
+}
+
+_DUAL_OPS = {
+    ("GET", "/services/v4/campaigns/{campaign_id}/proposed_insertion_orders"),
+    ("GET", "/services/v4/proposed_insertion_orders"),
+    ("GET", "/services/v4/proposed_insertion_orders/{proposed_io_id}"),
+    ("GET", "/services/v4/proposed_insertion_orders/{proposed_io_id}/proposed_placements"),
+    ("GET", "/services/v4/proposed_placements"),
+    ("GET", "/services/v4/proposed_placements/{proposed_placement_id}"),
+    ("PATCH", "/services/v4/proposed_ads/{proposed_ad_id}"),
+    ("PATCH", "/services/v4/proposed_insertion_orders/{proposed_io_id}"),
+    ("PATCH", "/services/v4/proposed_placements/{proposed_placement_id}"),
+    ("POST", "/services/v4/campaigns/{campaign_id}/proposed_insertion_orders"),
+    ("POST", "/services/v4/creative_instances/{creative_instance_id}/creative_metrics"),
+    ("POST", "/services/v4/proposed_insertion_orders/{proposed_io_id}/proposed_placements"),
+    ("POST", "/services/v4/proposed_placements/{proposed_placement_id}/proposed_ads"),
+    ("PUT", "/services/v3/advertisers/{advertiser_id}/add_relationships"),
+    ("PUT", "/services/v4/creative_instances/{creative_instance_id}/creative_metrics/{creative_metric_id}"),
+}
+
+# Root element name per top-level path segment, for nicer XML roots.
+_XML_ROOT = "response"
+
+
+def _singular(name: str) -> str:
+    if name.endswith("ies"):
+        return name[:-3] + "y"
+    if name.endswith("s") and not name.endswith("ss"):
+        return name[:-1]
+    return name
+
+
+def _xml_el(tag: str, value) -> str:
+    """Serialise one value as an XML element (recursive)."""
+    tag = tag or "item"
+    if value is None:
+        return f"<{tag}/>"
+    if isinstance(value, bool):
+        return f"<{tag}>{'true' if value else 'false'}</{tag}>"
+    if isinstance(value, dict):
+        inner = "".join(_xml_el(k, v) for k, v in value.items())
+        return f"<{tag}>{inner}</{tag}>"
+    if isinstance(value, (list, tuple)):
+        item_tag = _singular(tag)
+        inner = "".join(_xml_el(item_tag, v) for v in value)
+        return f"<{tag}>{inner}</{tag}>"
+    return f"<{tag}>{_xml_escape(str(value))}</{tag}>"
+
+
+def _to_xml(data, root: str = _XML_ROOT) -> str:
+    """Render a dict/list payload to an XML document string."""
+    if isinstance(data, dict):
+        body = "".join(_xml_el(k, v) for k, v in data.items())
+    elif isinstance(data, (list, tuple)):
+        body = "".join(_xml_el(_singular(root), v) for v in data)
+    else:
+        body = _xml_escape(str(data))
+    return f"{_XML_DECL}<{root}>{body}</{root}>"
+
+
+def _default_format(method: str, path_suffix: str) -> Optional[str]:
+    """Return 'xml' | 'json' | None(=unpinned/json) for an operation."""
+    key = (method.upper(), path_suffix)
+    if key in _XML_DEFAULT_OPS:
+        return "xml"
+    if key in _DUAL_OPS:
+        return "json"  # negotiable to xml via Accept
+    return None
+
+
+def _is_xml_capable(method: str, path_suffix: str) -> bool:
+    key = (method.upper(), path_suffix)
+    return key in _XML_DEFAULT_OPS or key in _DUAL_OPS
+
+
+def _wants_xml(accept: str, default: Optional[str]) -> bool:
+    accept = (accept or "").lower()
+    if "application/xml" in accept or "text/xml" in accept:
+        return True
+    if "application/json" in accept:
+        return False
+    return default == "xml"
+
+
+class _ContentNegotiatedRoute(APIRoute):
+    """Route class that transcodes a JSON response to XML per the spec's declared
+    media types and the request's Accept header. Handlers keep returning plain
+    dicts; only the serialized bytes change when XML is negotiated. Non-2xx
+    responses (404 errors) and the 202 reporting handshakes are left as JSON."""
+
+    def get_route_handler(self):
+        original = super().get_route_handler()
+        # path without the /freewheel prefix -> matches the spec maps
+        suffix = self.path[len("/freewheel"):] if self.path.startswith("/freewheel") else self.path
+        methods = self.methods or set()
+
+        async def custom(request: Request):
+            response = await original(request)
+            # Only transcode successful JSON bodies for XML-capable operations.
+            method = request.method.upper()
+            if method not in methods:
+                return response
+            if not _is_xml_capable(method, suffix):
+                return response
+            if not (200 <= response.status_code < 300):
+                return response
+            media = (getattr(response, "media_type", "") or "")
+            if "json" not in media:
+                return response
+            default = _default_format(method, suffix)
+            if not _wants_xml(request.headers.get("accept", ""), default):
+                return response
+            try:
+                payload = json.loads(bytes(response.body))
+            except Exception:
+                return response
+            xml = _to_xml(payload, root=_XML_ROOT)
+            return Response(content=xml, media_type="application/xml",
+                            status_code=response.status_code)
+
+        return custom
+
+
+router = APIRouter(prefix="/freewheel", route_class=_ContentNegotiatedRoute)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
