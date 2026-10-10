@@ -4,19 +4,22 @@ A mock API layer for local integration testing against ad-platform APIs. Built w
 
 ## Supported Platforms
 
-| Prefix | Platform |
-|---|---|
-| `/basiswodh/v1` | Basis Technologies (WODH) |
-| `/basisuil` | Basis DSP (UIL) |
-| `/dv360/v4` | Google Display & Video 360 |
-| `/triton` | Triton Digital Metrics |
-| `/triton-booking` | Triton Digital Booking (TAP) |
-| `/hivestack` | Hivestack OpenRTB 2.5 DOOH |
-| `/adswizz/v9` | AdsWizz Domain API v9 |
-| `/thetradedesk` | The Trade Desk Platform API v3 |
-| `/gam/v1` | Google Ad Manager REST API v1 |
-| `/radioworkflow` | Radio Workflow Partner API (`https://api.radioworkflow.com`) |
-| `/stackadapt` | StackAdapt GraphQL DSP API (`https://api.stackadapt.com/graphql`) |
+| Prefix | Platform | Source |
+|---|---|---|
+| `/basiswodh/v1` | Basis Technologies (WODH) | — |
+| `/basisuil` | Basis DSP (UIL) | [api.sitescout.com](https://api.sitescout.com/) (base URL) |
+| `/dv360/v4` | Google Display & Video 360 | [DV360 API v4 reference](https://developers.google.com/display-video/api/reference/rest); delivery reporting mirrors the [Bid Manager API](https://developers.google.com/bid-manager/reference/rest) |
+| `/triton` | Triton Digital Metrics | — |
+| `/triton-booking` | Triton Digital Booking (TAP) | — |
+| `/hivestack` | Hivestack OpenRTB 2.5 DOOH | [apps.hivestack.com/api/v2](https://apps.hivestack.com/api/v2/) (base URL) |
+| `/adswizz/v9` | AdsWizz Domain API v9 | [AdsWizz Domain API v9 docs](https://docs.adswizz.com/domain-api/v9/) + [OpenAPI spec](https://docs.adswizz.com/domain-api/v9/openapi.json) |
+| `/thetradedesk` | The Trade Desk Platform API v3 | — |
+| `/gam/v1` | Google Ad Manager REST API v1 | [Ad Manager API reference](https://developers.google.com/ad-manager/api/beta/reference/rest) |
+| `/radioworkflow` | Radio Workflow Partner API | [api.radioworkflow.com](https://api.radioworkflow.com) (base URL) |
+| `/stackadapt` | StackAdapt GraphQL DSP API | [StackAdapt GraphQL reference](https://docs.stackadapt.com/graphql/reference); built from the official StackAdapt GraphQL SDL (user-supplied, stored locally as `stackadapt_public_schema.graphql`) |
+| `/freewheel` | FreeWheel (api.freewheel.tv) | Built from the authoritative FreeWheel OpenAPI specs (user-supplied, 52 JSON files); real base [api.freewheel.tv](https://api.freewheel.tv), sub-paths `/services/v3`, `/services/v4`, `/reporting/v1` preserved verbatim |
+
+Source references are tracked in [`platform_api_sources.yml`](platform_api_sources.yml). A blank Source means no reference URL is on file yet.
 
 Each platform can be toggled on or off in `config.yml`:
 
@@ -239,6 +242,40 @@ If `API_KEY` is blank or unset, all requests pass through without auth.
 
 ---
 
+## Platform Notes
+
+### FreeWheel content negotiation (`/freewheel`)
+FreeWheel's real APIs return different media types per operation, and the mock
+mirrors that via per-operation content negotiation (the response body is
+transcoded; request handling and field names are unchanged):
+
+- **v3** (`/services/v3` — campaign, insertion order, advertiser, agency, brand,
+  placement): responses default to **XML** where the spec declares
+  `application/xml`; send `Accept: application/json` to get JSON. The split is
+  per-operation (e.g. campaign-create returns JSON, insertion-order-create
+  returns XML), matching the specs.
+- **v4 dual-type** (Creative Instance Metrics; proposed IO / placement / ad):
+  default **JSON**, with XML available via `Accept: application/xml`.
+- **v4 marketplace / programmatic / RFP** and reporting: **JSON** (the specs
+  declare `*/*` or JSON, so JSON is spec-compliant).
+
+The XML element layout follows a conventional field-mirrors-element mapping
+(the specs carry no OpenAPI `xml` metadata), so it is faithful in media type and
+field names but not guaranteed byte-identical to production FreeWheel XML.
+
+Delivery reporting is **asynchronous**: an audience report GET under
+`/reporting/v1/...` returns `202 Accepted` with a `job_id`; poll
+`GET /freewheel/reporting/v1/job/{job_id}` for the `200` result.
+
+### DV360 delivery reporting (`/dv360/v4`)
+Delivery reporting mirrors the **Bid Manager API** style: create/list/get
+queries under `/dv360/v4/queries` (`:run` to execute, `/reports` to fetch),
+plus a convenience `GET /dv360/v4/advertisers/{id}/deliveryStats` direct pull.
+Unlike the real async Bid Manager, the mock's `:run` is synchronous for test
+convenience.
+
+---
+
 ## Project Structure
 
 ```
@@ -259,7 +296,8 @@ If `API_KEY` is blank or unset, all requests pass through without auth.
 │       ├── thetradedesk.py
 │       ├── gam.py
 │       ├── radioworkflow.py
-│       └── stackadapt.py    # StackAdapt GraphQL DSP API
+│       ├── stackadapt.py    # StackAdapt GraphQL DSP API
+│       └── freewheel.py     # FreeWheel API (v3/v4 + async reporting; XML/JSON content negotiation)
 ├── tests/
 ├── config.yml               # Enable/disable platform APIs
 ├── platform_api_sources.yml # Doc/spec URLs each platform mock was built from

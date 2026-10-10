@@ -21,6 +21,7 @@ AdBridge is a mock API layer for local integration testing against ad-platform A
 | `/gam/v1` | Google Ad Manager REST API v1 |
 | `/radioworkflow` | Radio Workflow Partner API (`https://api.radioworkflow.com`) |
 | `/stackadapt` | StackAdapt GraphQL DSP API (`https://api.stackadapt.com/graphql`) |
+| `/freewheel` | FreeWheel API (`https://api.freewheel.tv`) — v3/v4 + async reporting |
 
 Each platform can be toggled on/off in `config.yml` under `apis:`.
 
