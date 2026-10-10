@@ -32,6 +32,7 @@ tags_metadata = [
     {"name": "/basisuil", "description": "Basis DSP API mock endpoints"},
     {"name": "/radioworkflow", "description": "Radio Workflow Partner API mock endpoints"},
     {"name": "/stackadapt", "description": "StackAdapt GraphQL DSP API mock endpoint"},
+    {"name": "/freewheel", "description": "Freewheel (api.freewheel.tv) API mock endpoints"},
 ]
 
 app = FastAPI(
@@ -86,6 +87,10 @@ if _enabled.get("radioworkflow"):
 if _enabled.get("stackadapt"):
     from app.routes.stackadapt import router as stackadapt_router
     app.include_router(stackadapt_router, tags=["/stackadapt"])
+
+if _enabled.get("freewheel"):
+    from app.routes.freewheel import router as freewheel_router
+    app.include_router(freewheel_router, tags=["/freewheel"])
 
 
 @app.on_event("startup")

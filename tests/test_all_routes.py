@@ -13,6 +13,7 @@ ROUTE_FILES = [
     "app/routes/adswizz.py",
     "app/routes/basisuil.py",
     "app/routes/stackadapt.py",
+    "app/routes/freewheel.py",
 ]
 
 

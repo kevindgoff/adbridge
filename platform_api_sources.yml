@@ -45,3 +45,35 @@ platforms:
     base_url: https://api.stackadapt.com/graphql
     auth_header: X-Authorization
     retrieved: 2026-10-09
+
+  freewheel:
+    module: app/routes/freewheel.py
+    mock_prefix: /freewheel
+    base_url: https://api.freewheel.tv
+    auth_header: X-API-Key  # mock normalises Freewheel session-token auth to X-API-Key
+    retrieved: 2026-10-09
+    # Spec-faithful rebuild from the authoritative Freewheel OpenAPI specs
+    # supplied by the user (52 JSON specs). Real sub-paths /services/v3,
+    # /services/v4, /reporting/v1 are preserved verbatim under /freewheel.
+    # Authoritative spec files this mock was built from:
+    spec:
+      - campaign-api-v3.json          # Campaign management V3
+      - advertiser-api-v3.json        # Advertiser V3
+      - agency-api-v3.json            # Agency V3
+      - brand-api-v3.json             # Brand V3
+      - insertion-order-api-v3.json   # Insertion Order (order pushes) V3
+      - placement-api-v3-xml.json     # Placement V3 (real spec XML; mocked as JSON)
+      - reporting-api.json            # Async delivery reporting (202 + job poll)
+      - creative-instance-metrics-api-v4.json  # Creative Instance Metrics V4
+      - marketplace-listing-api-v4.json
+      - marketplace-creative-api-v4.json
+      - marketplace-inventory-split-api-v4.json
+      - marketplace-inventory-split-orders-api-v4.json
+      - marketplace-purchased-inventory-orders-api-v4.json
+      - marketplace-sold-inventory-orders-api-v4.json
+      - marketplace-supply-source-package-api-v4.json
+      - rfp-open-api.json             # RFP forecasts V4
+      - proposed-insertion-order-api-v4.json
+      - proposed-placement-api-v4.json
+      - proposed-ad-api-v4.json
+      - programmatic-deal-open-api.json  # Programmatic deals V4

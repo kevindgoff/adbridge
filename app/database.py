@@ -1623,6 +1623,262 @@ CREATE TABLE IF NOT EXISTS sa_delivery_stats (
     revenue DOUBLE PRECISION DEFAULT 0,
     atos DOUBLE PRECISION DEFAULT 0
 );
+
+-- ===========================================================================
+-- Freewheel (api.freewheel.tv) -- fw_* tables
+-- Spec-faithful rebuild from the authoritative OpenAPI specs in
+-- /tmp/fw-specs/*.json. Real sub-paths /services/v3, /services/v4, /reporting/v1
+-- are preserved verbatim under the AdBridge /freewheel prefix. Integer PKs match
+-- the real id types. Graph: agency -> advertiser -> brand -> campaign -> IO ->
+-- placement, plus per-day delivery stats backing the ASYNC reporting job model,
+-- marketplace V4 inventory, and RFP/proposed/programmatic V4 entities.
+-- ===========================================================================
+CREATE TABLE IF NOT EXISTS fw_agencies (
+    agency_id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL,
+    external_id TEXT,
+    status TEXT NOT NULL DEFAULT 'active',
+    parent_agency_id INTEGER,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS fw_advertisers (
+    advertiser_id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL,
+    external_id TEXT,
+    agency_id INTEGER REFERENCES fw_agencies(agency_id),
+    status TEXT NOT NULL DEFAULT 'active',
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS fw_brands (
+    brand_id SERIAL PRIMARY KEY,
+    advertiser_id INTEGER REFERENCES fw_advertisers(advertiser_id),
+    name TEXT NOT NULL,
+    external_id TEXT,
+    status TEXT NOT NULL DEFAULT 'active',
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS fw_relationships (
+    id SERIAL PRIMARY KEY,
+    parent_type TEXT NOT NULL,
+    parent_id INTEGER NOT NULL,
+    child_type TEXT NOT NULL,
+    child_id INTEGER NOT NULL,
+    status TEXT NOT NULL DEFAULT 'active'
+);
+
+CREATE TABLE IF NOT EXISTS fw_campaigns (
+    campaign_id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL,
+    description TEXT,
+    advertiser_id INTEGER REFERENCES fw_advertisers(advertiser_id),
+    agency_id INTEGER REFERENCES fw_agencies(agency_id),
+    external_id TEXT,
+    status TEXT NOT NULL DEFAULT 'draft',
+    created_at TEXT NOT NULL,
+    updated_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS fw_insertion_orders (
+    insertion_order_id SERIAL PRIMARY KEY,
+    campaign_id INTEGER REFERENCES fw_campaigns(campaign_id),
+    name TEXT NOT NULL,
+    description TEXT,
+    client_po TEXT,
+    brand_id INTEGER REFERENCES fw_brands(brand_id),
+    external_id TEXT,
+    primary_sales_person TEXT,
+    primary_trafficker TEXT,
+    currency TEXT NOT NULL DEFAULT 'USD',
+    status TEXT NOT NULL DEFAULT 'draft',
+    created_at TEXT NOT NULL,
+    updated_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS fw_placements (
+    placement_id SERIAL PRIMARY KEY,
+    insertion_order_id INTEGER REFERENCES fw_insertion_orders(insertion_order_id),
+    name TEXT NOT NULL,
+    description TEXT,
+    external_id TEXT,
+    start_date TEXT,
+    end_date TEXT,
+    status TEXT NOT NULL DEFAULT 'active',
+    created_at TEXT NOT NULL,
+    updated_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS fw_delivery_stats (
+    id SERIAL PRIMARY KEY,
+    campaign_id INTEGER,
+    insertion_order_id INTEGER,
+    placement_id INTEGER,
+    advertiser_id INTEGER,
+    sales_channel TEXT,
+    stat_date TEXT NOT NULL,
+    impressions INTEGER DEFAULT 0,
+    clicks INTEGER DEFAULT 0,
+    spend DOUBLE PRECISION DEFAULT 0,
+    revenue DOUBLE PRECISION DEFAULT 0,
+    completion_rate DOUBLE PRECISION DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS fw_audience_items (
+    audience_item_id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'active',
+    sales_channel TEXT
+);
+
+CREATE TABLE IF NOT EXISTS fw_audience_segments (
+    audience_segment_id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL,
+    segment_kv TEXT,
+    sales_channel TEXT
+);
+
+CREATE TABLE IF NOT EXISTS fw_report_jobs (
+    job_id TEXT PRIMARY KEY,
+    report_type TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    sales_channel TEXT,
+    start_date TEXT,
+    end_date TEXT,
+    filters TEXT,
+    rows_json TEXT,
+    created_at TEXT NOT NULL,
+    completed_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS fw_creative_metrics (
+    creative_metric_id SERIAL PRIMARY KEY,
+    creative_instance_id INTEGER NOT NULL,
+    metric_type TEXT,
+    event_name TEXT,
+    url TEXT,
+    created_at TEXT NOT NULL
+);
+
+-- Marketplace (V4)
+CREATE TABLE IF NOT EXISTS fw_available_listings (
+    id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL,
+    seller TEXT,
+    inventory_type TEXT,
+    floor_cpm DOUBLE PRECISION,
+    status TEXT NOT NULL DEFAULT 'available'
+);
+
+CREATE TABLE IF NOT EXISTS fw_listings (
+    id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL,
+    seller TEXT,
+    status TEXT NOT NULL DEFAULT 'active'
+);
+
+CREATE TABLE IF NOT EXISTS fw_mkpl_creatives (
+    mkpl_creative_id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL,
+    creative_type TEXT NOT NULL DEFAULT 'mkpl_exchange_programmatic_creative',
+    status TEXT NOT NULL DEFAULT 'active'
+);
+
+CREATE TABLE IF NOT EXISTS fw_inventory_splits (
+    id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL,
+    split_percent DOUBLE PRECISION,
+    status TEXT NOT NULL DEFAULT 'active'
+);
+
+CREATE TABLE IF NOT EXISTS fw_inventory_split_orders (
+    id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL,
+    inventory_split_id INTEGER,
+    status TEXT NOT NULL DEFAULT 'active'
+);
+
+CREATE TABLE IF NOT EXISTS fw_purchased_inventory_orders (
+    id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL,
+    buyer TEXT,
+    status TEXT NOT NULL DEFAULT 'active'
+);
+
+CREATE TABLE IF NOT EXISTS fw_sold_inventory_orders (
+    id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL,
+    seller TEXT,
+    status TEXT NOT NULL DEFAULT 'active'
+);
+
+CREATE TABLE IF NOT EXISTS fw_supply_source_packages (
+    id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL,
+    source TEXT,
+    status TEXT NOT NULL DEFAULT 'active'
+);
+
+-- RFP + Proposed + Programmatic (V4)
+CREATE TABLE IF NOT EXISTS fw_rfp_forecasts (
+    id SERIAL PRIMARY KEY,
+    granularity TEXT,
+    data_json TEXT,
+    status TEXT NOT NULL DEFAULT 'completed',
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS fw_proposed_insertion_orders (
+    proposed_io_id SERIAL PRIMARY KEY,
+    campaign_id INTEGER,
+    name TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'proposed',
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS fw_proposed_placements (
+    proposed_placement_id SERIAL PRIMARY KEY,
+    proposed_io_id INTEGER REFERENCES fw_proposed_insertion_orders(proposed_io_id),
+    name TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'proposed',
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS fw_proposed_ads (
+    proposed_ad_id SERIAL PRIMARY KEY,
+    proposed_placement_id INTEGER REFERENCES fw_proposed_placements(proposed_placement_id),
+    name TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'proposed',
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS fw_programmatic_deals (
+    deal_id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL,
+    deal_type TEXT,
+    description TEXT,
+    salesperson TEXT,
+    status TEXT NOT NULL DEFAULT 'draft',
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS fw_programmatic_buyers (
+    id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL,
+    seat_id TEXT
+);
+
+CREATE TABLE IF NOT EXISTS fw_global_advertisers (
+    id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS fw_global_brands (
+    id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL,
+    global_advertiser_id INTEGER
+);
 """
 
 
@@ -3763,3 +4019,217 @@ def _seed_stackadapt(cur, now):
                 "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
                 (cid, gid, aid, stat_date, impressions, clicks,
                  conversions, cost, revenue, atos))
+
+
+def _seed_freewheel(cur, now):
+    """Seed Freewheel (api.freewheel.tv) mock data.
+
+    Idempotent: guarded by a COUNT(*) on fw_agencies so re-runs on every startup
+    (per init_db's design) do not duplicate rows. Builds a coherent graph --
+    agency -> advertiser -> brand -> campaign -> insertion order -> placement --
+    plus ~30 days of per-placement delivery stats that back the ASYNC reporting
+    job model, a handful of marketplace V4 entities, a couple of RFP forecasts,
+    proposed IO/placement/ad under a campaign, and programmatic deals + buyers +
+    global advertisers/brands.
+    """
+    cur.execute("SELECT COUNT(*) AS count FROM fw_agencies")
+    if cur.fetchone()["count"] > 0:
+        return
+
+    import random as _random
+    _random.seed(97)  # deterministic seed graph
+
+    # --- Agencies ---
+    agencies = [
+        ("Meridian Media Agency", "AGY-EXT-001"),
+        ("Vantage Advertising Group", "AGY-EXT-002"),
+    ]
+    agency_ids = []
+    for name, ext in agencies:
+        cur.execute(
+            "INSERT INTO fw_agencies (name, external_id, status, parent_agency_id, created_at) "
+            "VALUES (%s,%s,'active',%s,%s) RETURNING agency_id",
+            (name, ext, None, now))
+        agency_ids.append(cur.fetchone()["agency_id"])
+
+    # --- Advertisers (under agency 0) ---
+    advertiser_specs = [
+        ("Aurora Foods", "ADV-EXT-001", agency_ids[0]),
+        ("Beacon Financial", "ADV-EXT-002", agency_ids[0]),
+        ("Caldera Travel", "ADV-EXT-003", agency_ids[1]),
+    ]
+    advertiser_ids = []
+    for name, ext, agy in advertiser_specs:
+        cur.execute(
+            "INSERT INTO fw_advertisers (name, external_id, agency_id, status, created_at) "
+            "VALUES (%s,%s,%s,'active',%s) RETURNING advertiser_id",
+            (name, ext, agy, now))
+        advertiser_ids.append(cur.fetchone()["advertiser_id"])
+
+    # --- Agency/advertiser relationships ---
+    for adv_id, (_n, _e, agy) in zip(advertiser_ids, advertiser_specs):
+        cur.execute(
+            "INSERT INTO fw_relationships (parent_type, parent_id, child_type, child_id, status) "
+            "VALUES ('agency',%s,'advertiser',%s,'active')", (agy, adv_id))
+
+    # --- Brands (under each advertiser) ---
+    brand_ids = []
+    for adv_id in advertiser_ids:
+        for b in range(2):
+            cur.execute(
+                "INSERT INTO fw_brands (advertiser_id, name, external_id, status, created_at) "
+                "VALUES (%s,%s,%s,'active',%s) RETURNING brand_id",
+                (adv_id, f"Brand {adv_id}-{b+1}", f"BRD-{adv_id}-{b+1}", now))
+            brand_ids.append((cur.fetchone()["brand_id"], adv_id))
+
+    # --- Campaigns (one per advertiser) ---
+    campaign_ids = []
+    for i, adv_id in enumerate(advertiser_ids):
+        agy = advertiser_specs[i][2]
+        cur.execute(
+            "INSERT INTO fw_campaigns (name, description, advertiser_id, agency_id, "
+            "external_id, status, created_at, updated_at) "
+            "VALUES (%s,%s,%s,%s,%s,'active',%s,%s) RETURNING campaign_id",
+            (f"Campaign {adv_id} FY26", f"Seeded campaign for advertiser {adv_id}",
+             adv_id, agy, f"CMP-EXT-{adv_id}", now, now))
+        campaign_ids.append((cur.fetchone()["campaign_id"], adv_id))
+
+    # --- Insertion orders (one per campaign) + placements + delivery stats ---
+    sales_channels = ["direct", "programmatic"]
+    for idx, (cid, adv_id) in enumerate(campaign_ids):
+        brand_id = next(b for b, a in brand_ids if a == adv_id)
+        cur.execute(
+            "INSERT INTO fw_insertion_orders (campaign_id, name, description, client_po, "
+            "brand_id, external_id, primary_sales_person, primary_trafficker, currency, "
+            "status, created_at, updated_at) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'USD','booked',%s,%s) RETURNING insertion_order_id",
+            (cid, f"IO {cid}-1", "Seeded insertion order", f"PO-{cid}", brand_id,
+             f"IO-EXT-{cid}", "Jordan Sales", "Casey Traffic", now, now))
+        io_id = cur.fetchone()["insertion_order_id"]
+
+        for p in range(2):
+            cur.execute(
+                "INSERT INTO fw_placements (insertion_order_id, name, description, external_id, "
+                "start_date, end_date, status, created_at, updated_at) "
+                "VALUES (%s,%s,%s,%s,%s,%s,'active',%s,%s) RETURNING placement_id",
+                (io_id, f"Placement {io_id}-{p+1}", "Seeded placement",
+                 f"PL-EXT-{io_id}-{p+1}", _past_date(30), _future_date(30), now, now))
+            placement_id = cur.fetchone()["placement_id"]
+
+            # ~30 days of daily delivery stats per placement
+            channel = sales_channels[(idx + p) % len(sales_channels)]
+            for d in range(30):
+                stat_date = _past_date(29 - d)
+                impressions = _random.randint(4000, 90000)
+                clicks = int(impressions * _random.uniform(0.001, 0.02))
+                spend = round(impressions / 1000 * _random.uniform(3.0, 12.0), 2)
+                revenue = round(spend * _random.uniform(1.1, 1.8), 2)
+                completion_rate = round(_random.uniform(0.55, 0.98), 4)
+                cur.execute(
+                    "INSERT INTO fw_delivery_stats (campaign_id, insertion_order_id, "
+                    "placement_id, advertiser_id, sales_channel, stat_date, impressions, "
+                    "clicks, spend, revenue, completion_rate) "
+                    "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                    (cid, io_id, placement_id, adv_id, channel, stat_date,
+                     impressions, clicks, spend, revenue, completion_rate))
+
+    # --- Audience items / segments (reporting dimensions) ---
+    for i in range(4):
+        cur.execute(
+            "INSERT INTO fw_audience_items (name, status, sales_channel) VALUES (%s,'active',%s)",
+            (f"Audience Item {i+1}", sales_channels[i % len(sales_channels)]))
+    for i in range(3):
+        cur.execute(
+            "INSERT INTO fw_audience_segments (name, segment_kv, sales_channel) VALUES (%s,%s,%s)",
+            (f"Audience Segment {i+1}", f"age={25+i*10}-{34+i*10}",
+             sales_channels[i % len(sales_channels)]))
+
+    # --- Creative instance metrics ---
+    for ci in range(2):
+        cur.execute(
+            "INSERT INTO fw_creative_metrics (creative_instance_id, metric_type, event_name, "
+            "url, created_at) VALUES (%s,%s,%s,%s,%s)",
+            (9000 + ci, "impression", "fire", f"https://pixel.example/{ci}", now))
+
+    # --- Marketplace (V4) ---
+    for i in range(3):
+        cur.execute(
+            "INSERT INTO fw_available_listings (name, seller, inventory_type, floor_cpm, status) "
+            "VALUES (%s,%s,%s,%s,'available')",
+            (f"Available Listing {i+1}", f"Seller {i+1}", "ctv", round(5.0 + i, 2)))
+    for i in range(2):
+        cur.execute(
+            "INSERT INTO fw_listings (name, seller, status) VALUES (%s,%s,'active')",
+            (f"Listing {i+1}", f"Seller {i+1}"))
+    mkpl_types = [
+        "mkpl_exchange_programmatic_creative",
+        "mkpl_private_direct_sold_creative",
+        "mkpl_private_programmatic_creative",
+    ]
+    for i, t in enumerate(mkpl_types):
+        cur.execute(
+            "INSERT INTO fw_mkpl_creatives (name, creative_type, status) VALUES (%s,%s,'active')",
+            (f"Marketplace Creative {i+1}", t))
+    for i in range(2):
+        cur.execute(
+            "INSERT INTO fw_inventory_splits (name, split_percent, status) VALUES (%s,%s,'active')",
+            (f"Inventory Split {i+1}", round(50.0, 2)))
+        cur.execute(
+            "INSERT INTO fw_inventory_split_orders (name, inventory_split_id, status) "
+            "VALUES (%s,%s,'active')", (f"Split Order {i+1}", i + 1))
+        cur.execute(
+            "INSERT INTO fw_purchased_inventory_orders (name, buyer, status) VALUES (%s,%s,'active')",
+            (f"Purchased Order {i+1}", f"Buyer {i+1}"))
+        cur.execute(
+            "INSERT INTO fw_sold_inventory_orders (name, seller, status) VALUES (%s,%s,'active')",
+            (f"Sold Order {i+1}", f"Seller {i+1}"))
+        cur.execute(
+            "INSERT INTO fw_supply_source_packages (name, source, status) VALUES (%s,%s,'active')",
+            (f"Supply Source Package {i+1}", f"Source {i+1}"))
+
+    # --- RFP forecasts ---
+    for i in range(2):
+        cur.execute(
+            "INSERT INTO fw_rfp_forecasts (granularity, data_json, status, created_at) "
+            "VALUES (%s,%s,'completed',%s)",
+            ("daily" if i == 0 else "weekly",
+             '{"available_impressions": %d}' % (1000000 * (i + 1)), now))
+
+    # --- Proposed IO -> placement -> ad (under first campaign) ---
+    first_campaign = campaign_ids[0][0]
+    cur.execute(
+        "INSERT INTO fw_proposed_insertion_orders (campaign_id, name, status, created_at) "
+        "VALUES (%s,%s,'proposed',%s) RETURNING proposed_io_id",
+        (first_campaign, "Proposed IO 1", now))
+    pio_id = cur.fetchone()["proposed_io_id"]
+    cur.execute(
+        "INSERT INTO fw_proposed_placements (proposed_io_id, name, status, created_at) "
+        "VALUES (%s,%s,'proposed',%s) RETURNING proposed_placement_id",
+        (pio_id, "Proposed Placement 1", now))
+    ppl_id = cur.fetchone()["proposed_placement_id"]
+    cur.execute(
+        "INSERT INTO fw_proposed_ads (proposed_placement_id, name, status, created_at) "
+        "VALUES (%s,%s,'proposed',%s)", (ppl_id, "Proposed Ad 1", now))
+
+    # --- Programmatic deals + buyers + globals ---
+    deal_specs = [
+        ("Premium CTV Deal", "preferred_deal", "High-value CTV inventory", "Sam Seller"),
+        ("Open Exchange Deal", "private_auction", "Programmatic auction deal", "Pat Seller"),
+    ]
+    for name, dtype, desc, sp in deal_specs:
+        cur.execute(
+            "INSERT INTO fw_programmatic_deals (name, deal_type, description, salesperson, "
+            "status, created_at) VALUES (%s,%s,%s,%s,'active',%s)",
+            (name, dtype, desc, sp, now))
+    for i in range(2):
+        cur.execute(
+            "INSERT INTO fw_programmatic_buyers (name, seat_id) VALUES (%s,%s)",
+            (f"Programmatic Buyer {i+1}", f"SEAT-{100+i}"))
+    for i in range(2):
+        cur.execute(
+            "INSERT INTO fw_global_advertisers (name) VALUES (%s) RETURNING id",
+            (f"Global Advertiser {i+1}",))
+        gadv_id = cur.fetchone()["id"]
+        cur.execute(
+            "INSERT INTO fw_global_brands (name, global_advertiser_id) VALUES (%s,%s)",
+            (f"Global Brand {i+1}", gadv_id))
