@@ -1,5 +1,6 @@
 import uuid
 import os
+import json
 import random
 from datetime import datetime, timedelta
 
@@ -384,6 +385,31 @@ CREATE TABLE IF NOT EXISTS dv360_floodlight_activities (
     display_name TEXT NOT NULL,
     serving_status TEXT DEFAULT 'FLOODLIGHT_ACTIVITY_SERVING_STATUS_ENABLED',
     advertiser_ids TEXT
+);
+
+-- Bid Manager-style delivery reporting: daily per-entity delivery metrics.
+CREATE TABLE IF NOT EXISTS dv360_delivery_stats (
+    id SERIAL PRIMARY KEY,
+    advertiser_id INTEGER NOT NULL REFERENCES dv360_advertisers(advertiser_id),
+    entity_level TEXT NOT NULL,              -- campaign | insertion_order | line_item
+    entity_id INTEGER NOT NULL,
+    date TEXT NOT NULL,                       -- YYYY-MM-DD
+    impressions BIGINT NOT NULL DEFAULT 0,
+    clicks BIGINT NOT NULL DEFAULT 0,
+    revenue_micros BIGINT NOT NULL DEFAULT 0, -- spend/revenue in micros of advertiser currency
+    conversions BIGINT NOT NULL DEFAULT 0,
+    video_completions BIGINT NOT NULL DEFAULT 0
+);
+
+-- Bid Manager-style persisted queries (reporting definitions).
+CREATE TABLE IF NOT EXISTS dv360_queries (
+    query_id INTEGER PRIMARY KEY,
+    title TEXT NOT NULL,
+    metrics TEXT,                             -- JSON array of metric names
+    group_bys TEXT,                           -- JSON array of group-by dimensions
+    date_range_start TEXT,                    -- YYYY-MM-DD
+    date_range_end TEXT,                      -- YYYY-MM-DD
+    created_time TEXT NOT NULL
 );
 
 -- ==================== Triton Booking (TAP) Tables ====================
@@ -2496,6 +2522,61 @@ def _seed_dv360(cur, now):
                     str(adv_id),
                 ),
             )
+
+    # ── Delivery stats: ~30 days of daily metrics per entity ─────────────────
+    # Covers every seeded campaign, insertion order, and line item so the
+    # Bid Manager-style reporting endpoints have real data to aggregate.
+    stat_entities = (
+        [("campaign", cid, adv_id) for cid, adv_id in campaign_ids_dv]
+        + [("insertion_order", io_id, adv_id) for io_id, adv_id, _cid in io_ids]
+        + [("line_item", li_id, adv_id) for li_id, adv_id, _cid, _io in li_ids]
+    )
+    for entity_level, entity_id, adv_id in stat_entities:
+        # Deterministic-ish daily volume scaled by entity level so parents
+        # read larger than their children.
+        base = {"campaign": 40000, "insertion_order": 18000, "line_item": 7000}[entity_level]
+        for day_offset in range(30):
+            date = _past_date(30 - day_offset)
+            impressions = random.randint(int(base * 0.5), int(base * 1.5))
+            clicks = random.randint(int(impressions * 0.001), max(1, int(impressions * 0.02)))
+            # revenue/spend in micros: ~ $2–$12 CPM
+            revenue_micros = int(impressions / 1000 * random.uniform(2.0, 12.0) * 1_000_000)
+            conversions = random.randint(0, max(1, int(clicks * 0.1)))
+            video_completions = random.randint(0, int(impressions * 0.3))
+            cur.execute(
+                "INSERT INTO dv360_delivery_stats "
+                "(advertiser_id,entity_level,entity_id,date,impressions,clicks,"
+                "revenue_micros,conversions,video_completions) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                (adv_id, entity_level, entity_id, date, impressions, clicks,
+                 revenue_micros, conversions, video_completions),
+            )
+
+    # ── Example saved queries (reporting definitions) ────────────────────────
+    example_queries = [
+        (
+            90000001,
+            "Last 30 Days - Line Item Performance",
+            ["impressions", "clicks", "revenueMicros", "conversions", "videoCompletions"],
+            ["line_item"],
+            _past_date(30), _past_date(0),
+        ),
+        (
+            90000002,
+            "Last 7 Days - Campaign Delivery",
+            ["impressions", "clicks", "revenueMicros"],
+            ["campaign"],
+            _past_date(7), _past_date(0),
+        ),
+    ]
+    for q_id, title, metrics, group_bys, dr_start, dr_end in example_queries:
+        cur.execute(
+            "INSERT INTO dv360_queries "
+            "(query_id,title,metrics,group_bys,date_range_start,date_range_end,created_time) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s)",
+            (q_id, title, json.dumps(metrics), json.dumps(group_bys),
+             dr_start, dr_end, now),
+        )
 
 
 def _seed_triton_booking(cur, now):

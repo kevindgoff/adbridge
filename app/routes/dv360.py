@@ -1,4 +1,15 @@
-"""DV360 (Display & Video 360) mock API endpoints under /dv360/v4."""
+"""DV360 (Display & Video 360) mock API endpoints under /dv360/v4.
+
+Delivery reporting (added) mirrors the Bid Manager API surface
+(queries.create/get/list/run + reports). ASSUMPTION: the real Bid Manager
+run is an asynchronous, job-based operation that produces a downloadable
+report file; this mock runs the query SYNCHRONOUSLY and returns the
+aggregated rows inline. Metrics mirror Bid Manager core delivery metrics
+(impressions, clicks, revenue/spend micros, ctr, conversions, video
+completions). All SQL is SQLite-portable (no Postgres `= ANY`).
+"""
+
+import json
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Body
 from typing import Optional
@@ -646,3 +657,282 @@ def get_floodlight_activity(floodlight_group_id: int, floodlight_activity_id: in
     if not row:
         raise HTTPException(404, "Floodlight activity not found")
     return dict(row)
+
+
+# ── Delivery Reporting (Bid Manager-style) ───────────────────────────────────
+#
+# Real DV360 reporting is the Bid Manager API: a query defines metrics +
+# group-bys + a date range, and running it produces a report. This mock
+# persists queries in dv360_queries, aggregates dv360_delivery_stats, and
+# returns rows synchronously (see module docstring).
+
+_VALID_ENTITY_LEVELS = ("campaign", "insertion_order", "line_item")
+_METRIC_COLUMNS = {
+    "impressions": "impressions",
+    "clicks": "clicks",
+    "revenueMicros": "revenue_micros",
+    "conversions": "conversions",
+    "videoCompletions": "video_completions",
+}
+
+
+def _load_json_field(value, default):
+    if value is None or value == "":
+        return default
+    if isinstance(value, (list, dict)):
+        return value
+    try:
+        return json.loads(value)
+    except (ValueError, TypeError):
+        return default
+
+
+def _format_query(row_dict):
+    """Shape a dv360_queries row into a Bid Manager-style query resource."""
+    return {
+        "queryId": row_dict["query_id"],
+        "metadata": {
+            "title": row_dict.get("title"),
+            "createdTime": row_dict.get("created_time"),
+        },
+        "params": {
+            "metrics": _load_json_field(row_dict.get("metrics"), []),
+            "groupBys": _load_json_field(row_dict.get("group_bys"), []),
+        },
+        "schedule": {
+            "startDate": row_dict.get("date_range_start"),
+            "endDate": row_dict.get("date_range_end"),
+        },
+    }
+
+
+def _metrics_block(impressions, clicks, revenue_micros, conversions, video_completions):
+    impressions = int(impressions or 0)
+    clicks = int(clicks or 0)
+    revenue_micros = int(revenue_micros or 0)
+    return {
+        "impressions": impressions,
+        "clicks": clicks,
+        "revenueMicros": revenue_micros,
+        "revenue": round(revenue_micros / 1_000_000, 2),
+        "ctr": round(clicks / impressions, 6) if impressions else 0.0,
+        "conversions": int(conversions or 0),
+        "videoCompletions": int(video_completions or 0),
+    }
+
+
+def _run_report(conn, advertiser_id, entity_level, start_date, end_date,
+                entity_id=None):
+    """Aggregate dv360_delivery_stats grouped by entity over a date range.
+
+    Returns (rows, totals). SQLite-portable: plain WHERE/GROUP BY with %s.
+    """
+    if entity_level not in _VALID_ENTITY_LEVELS:
+        entity_level = "line_item"
+
+    where = ["entity_level = %s"]
+    params = [entity_level]
+    if advertiser_id is not None:
+        where.append("advertiser_id = %s")
+        params.append(advertiser_id)
+    if entity_id is not None:
+        where.append("entity_id = %s")
+        params.append(entity_id)
+    if start_date:
+        where.append("date >= %s")
+        params.append(start_date)
+    if end_date:
+        where.append("date <= %s")
+        params.append(end_date)
+    where_sql = " AND ".join(where)
+
+    sql = (
+        "SELECT entity_id, "
+        "SUM(impressions) AS impressions, SUM(clicks) AS clicks, "
+        "SUM(revenue_micros) AS revenue_micros, SUM(conversions) AS conversions, "
+        "SUM(video_completions) AS video_completions "
+        f"FROM dv360_delivery_stats WHERE {where_sql} "
+        "GROUP BY entity_id ORDER BY entity_id"
+    )
+    agg = _q(conn, sql, tuple(params)).fetchall()
+
+    rows = []
+    t_imp = t_clk = t_rev = t_conv = t_vc = 0
+    for r in agg:
+        d = dict(r)
+        rows.append({
+            "dimensions": {
+                "entityLevel": entity_level,
+                "entityId": d["entity_id"],
+            },
+            "metrics": _metrics_block(
+                d["impressions"], d["clicks"], d["revenue_micros"],
+                d["conversions"], d["video_completions"]),
+        })
+        t_imp += int(d["impressions"] or 0)
+        t_clk += int(d["clicks"] or 0)
+        t_rev += int(d["revenue_micros"] or 0)
+        t_conv += int(d["conversions"] or 0)
+        t_vc += int(d["video_completions"] or 0)
+
+    totals = _metrics_block(t_imp, t_clk, t_rev, t_conv, t_vc)
+    return rows, totals
+
+
+@router.post("/queries")
+def create_query(body: dict = Body(...), conn=Depends(get_db)):
+    from app.database import _now, _past_date
+    max_row = _q(conn, "SELECT MAX(query_id) AS max_id FROM dv360_queries").fetchone()
+    q_id = body.get("queryId") or (max_row["max_id"] or 90000000) + 1
+
+    params_in = body.get("params") or {}
+    metrics = params_in.get("metrics") or body.get("metrics") or ["impressions", "clicks", "revenueMicros"]
+    group_bys = params_in.get("groupBys") or body.get("groupBys") or ["line_item"]
+
+    schedule_in = body.get("schedule") or {}
+    start_date = (schedule_in.get("startDate") or body.get("startDate") or _past_date(30))
+    end_date = (schedule_in.get("endDate") or body.get("endDate") or _past_date(0))
+    title = (body.get("metadata") or {}).get("title") or body.get("title") or "Untitled Query"
+
+    _q(conn,
+        "INSERT INTO dv360_queries "
+        "(query_id,title,metrics,group_bys,date_range_start,date_range_end,created_time) "
+        "VALUES (%s,%s,%s,%s,%s,%s,%s)",
+        (q_id, title, json.dumps(metrics), json.dumps(group_bys),
+         start_date, end_date, _now()))
+    conn.commit()
+    row = _q(conn, "SELECT * FROM dv360_queries WHERE query_id = %s", (q_id,)).fetchone()
+    return _format_query(dict(row))
+
+
+@router.get("/queries")
+def list_queries(pageSize: int = 25, pageToken: Optional[str] = None, conn=Depends(get_db)):
+    data, next_token = _paginate(
+        conn, "SELECT * FROM dv360_queries", (), pageSize, pageToken)
+    return {"queries": [_format_query(d) for d in data], "nextPageToken": next_token}
+
+
+@router.get("/queries/{query_id}")
+def get_query(query_id: int, conn=Depends(get_db)):
+    row = _q(conn, "SELECT * FROM dv360_queries WHERE query_id = %s", (query_id,)).fetchone()
+    if not row:
+        raise HTTPException(404, "Query not found")
+    return _format_query(dict(row))
+
+
+@router.post("/queries/{query_id}:run")
+def run_query(query_id: int,
+              startDate: Optional[str] = None, endDate: Optional[str] = None,
+              conn=Depends(get_db)):
+    row = _q(conn, "SELECT * FROM dv360_queries WHERE query_id = %s", (query_id,)).fetchone()
+    if not row:
+        raise HTTPException(404, "Query not found")
+    q = dict(row)
+    group_bys = _load_json_field(q.get("group_bys"), ["line_item"])
+    entity_level = group_bys[0] if group_bys else "line_item"
+    start_date = startDate or q.get("date_range_start")
+    end_date = endDate or q.get("date_range_end")
+
+    rows, totals = _run_report(conn, None, entity_level, start_date, end_date)
+    return {
+        "queryId": query_id,
+        "key": {"queryId": query_id, "reportId": query_id * 10 + 1},
+        "metadata": {
+            "status": {"state": "DONE"},
+            "reportDataStartDate": start_date,
+            "reportDataEndDate": end_date,
+            "groupBy": entity_level,
+            "metrics": _load_json_field(q.get("metrics"), []),
+        },
+        "rows": rows,
+        "totals": totals,
+    }
+
+
+@router.get("/queries/{query_id}/reports")
+def list_reports(query_id: int, conn=Depends(get_db)):
+    row = _q(conn, "SELECT * FROM dv360_queries WHERE query_id = %s", (query_id,)).fetchone()
+    if not row:
+        raise HTTPException(404, "Query not found")
+    q = dict(row)
+    # Synchronous mock: expose a single already-generated report per query.
+    return {
+        "reports": [
+            {
+                "key": {"queryId": query_id, "reportId": query_id * 10 + 1},
+                "metadata": {
+                    "status": {"state": "DONE"},
+                    "reportDataStartDate": q.get("date_range_start"),
+                    "reportDataEndDate": q.get("date_range_end"),
+                },
+            }
+        ],
+        "nextPageToken": None,
+    }
+
+
+@router.get("/advertisers/{advertiser_id}/deliveryStats")
+def get_advertiser_delivery_stats(advertiser_id: int,
+                                  entityType: Optional[str] = None,
+                                  entityId: Optional[int] = None,
+                                  startDate: Optional[str] = None,
+                                  endDate: Optional[str] = None,
+                                  conn=Depends(get_db)):
+    """Convenience direct pull: daily delivery rows + totals for an advertiser.
+
+    entityType filters to campaign | insertion_order | line_item; entityId
+    narrows to one entity. startDate/endDate (YYYY-MM-DD) bound the range.
+    """
+    adv = _q(conn, "SELECT * FROM dv360_advertisers WHERE advertiser_id = %s",
+             (advertiser_id,)).fetchone()
+    if not adv:
+        raise HTTPException(404, "Advertiser not found")
+
+    where = ["advertiser_id = %s"]
+    params = [advertiser_id]
+    if entityType:
+        if entityType not in _VALID_ENTITY_LEVELS:
+            raise HTTPException(400, f"entityType must be one of {_VALID_ENTITY_LEVELS}")
+        where.append("entity_level = %s")
+        params.append(entityType)
+    if entityId is not None:
+        where.append("entity_id = %s")
+        params.append(entityId)
+    if startDate:
+        where.append("date >= %s")
+        params.append(startDate)
+    if endDate:
+        where.append("date <= %s")
+        params.append(endDate)
+    where_sql = " AND ".join(where)
+
+    rows = _q(conn,
+        "SELECT entity_level, entity_id, date, impressions, clicks, revenue_micros, "
+        "conversions, video_completions "
+        f"FROM dv360_delivery_stats WHERE {where_sql} "
+        "ORDER BY date, entity_level, entity_id",
+        tuple(params)).fetchall()
+
+    daily = []
+    t_imp = t_clk = t_rev = t_conv = t_vc = 0
+    for r in rows:
+        d = dict(r)
+        daily.append({
+            "entityLevel": d["entity_level"],
+            "entityId": d["entity_id"],
+            "date": d["date"],
+            "metrics": _metrics_block(
+                d["impressions"], d["clicks"], d["revenue_micros"],
+                d["conversions"], d["video_completions"]),
+        })
+        t_imp += int(d["impressions"] or 0)
+        t_clk += int(d["clicks"] or 0)
+        t_rev += int(d["revenue_micros"] or 0)
+        t_conv += int(d["conversions"] or 0)
+        t_vc += int(d["video_completions"] or 0)
+
+    return {
+        "advertiserId": advertiser_id,
+        "rows": daily,
+        "totals": _metrics_block(t_imp, t_clk, t_rev, t_conv, t_vc),
+    }
