@@ -324,6 +324,29 @@ convenience.
 | `API_KEY` | No | If set, requires `X-API-Key` header on all requests |
 | `ADBRIDGE_CONFIG_PATH` | No | Path to config file (default `config.yml`) |
 
+---
+
+## AdsWizz: pushing an order
+
+The `/adswizz/v9` mock supports the full order push sequence from the AdsWizz Domain API v9. In Swagger (`/docs`, tag `/adswizz`), the request bodies for these calls come pre-filled with examples that work against the seed data:
+
+| # | Step | Endpoint |
+|---|---|---|
+| 1 | Create order | `POST /adswizz/v9/orders` |
+| 2 | Check for a duplicate line | `POST /adswizz/v9/campaigns/check-duplicates` |
+| 3 | Create a campaign per order line | `POST /adswizz/v9/campaigns` (set `orderId`) |
+| 4 | Create an ad | `POST /adswizz/v9/campaigns/{campaignId}/ads` |
+| 5 | Link the ad to zone groups | `POST /adswizz/v9/campaigns/{campaignId}/ads/{adId}/zone-groups` |
+| 6 | Set targeting | `PUT /adswizz/v9/campaigns/{campaignId}/ads/{adId}/targeting-rules` |
+| 7 | Launch | `PATCH /adswizz/v9/campaigns/{campaignId}?action=launch` |
+| 8 | Read back | `GET /adswizz/v9/orders/{id}`, `GET /adswizz/v9/orders/{id}/campaigns`, `GET /adswizz/v9/orders?modifiedAfter=` |
+
+Notes:
+- Orders, campaigns, and ads return the spec's camelCase fields (`advertiserId`, `startDate`, `cappingRules`, ...). The older snake_case keys are still returned so existing callers keep working.
+- Errors return the spec's `code`, `message`, and `errors[]` at the top level. The original `detail` key is still included.
+- Launch is permissive (no checks on ads or inventory). The `agency` header is accepted but not required.
+- Targeting `rules` are checked for a valid `type` and stored as sent.
+
 
 ---
 

@@ -931,11 +931,13 @@ CREATE TABLE IF NOT EXISTS aw_orders (
     objective_value INTEGER,
     objective_currency TEXT DEFAULT 'USD',
     objective_unlimited BOOLEAN DEFAULT FALSE,
+    managed_objective BOOLEAN DEFAULT FALSE,
     comments TEXT,
     external_reference TEXT,
     deal_id TEXT,
     archived BOOLEAN DEFAULT FALSE,
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL,
+    updated_at TEXT
 );
 
 CREATE TABLE IF NOT EXISTS aw_campaigns (
@@ -958,8 +960,12 @@ CREATE TABLE IF NOT EXISTS aw_campaigns (
     pacing_priority INTEGER DEFAULT 5,
     comments TEXT,
     external_reference TEXT,
+    category_ids TEXT,
+    ad_clashing BOOLEAN DEFAULT FALSE,
+    inventory_deal_id TEXT,
     archived BOOLEAN DEFAULT FALSE,
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL,
+    updated_at TEXT
 );
 
 CREATE TABLE IF NOT EXISTS aw_ads (
@@ -1057,6 +1063,28 @@ CREATE TABLE IF NOT EXISTS aw_audiogram_creatives (
     display_file_extension TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'PROCESSING',
     created_at TEXT NOT NULL
+);
+
+-- ==================== AdsWizz order push additions ====================
+
+-- Capping rules for orders, campaigns, and ads (owner_type: order | campaign | ad)
+CREATE TABLE IF NOT EXISTS aw_capping_rules (
+    id SERIAL PRIMARY KEY,
+    owner_type TEXT NOT NULL,
+    owner_id INTEGER NOT NULL,
+    unit TEXT NOT NULL,
+    unit_multiplier INTEGER NOT NULL,
+    cap_limit INTEGER NOT NULL
+);
+
+-- One TargetingRulesContainer per ad. List and object fields are stored as JSON text.
+CREATE TABLE IF NOT EXISTS aw_ad_targeting (
+    ad_id INTEGER PRIMARY KEY REFERENCES aw_ads(id),
+    zone_ids TEXT,
+    zone_group_ids TEXT,
+    delivery_instructions TEXT,
+    rules TEXT,
+    updated_at TEXT NOT NULL
 );
 
 -- ==================== The Trade Desk (TTD) v3 Tables ====================
@@ -3052,6 +3080,13 @@ def _migrate_adswizz_v9(cur):
     new_columns = [
         ("aw_advertisers", "agency_id", "INTEGER"),
         ("aw_ads", "missing_creative", "BOOLEAN DEFAULT FALSE"),
+        # order push
+        ("aw_orders", "managed_objective", "BOOLEAN DEFAULT FALSE"),
+        ("aw_orders", "updated_at", "TEXT"),
+        ("aw_campaigns", "category_ids", "TEXT"),
+        ("aw_campaigns", "ad_clashing", "BOOLEAN DEFAULT FALSE"),
+        ("aw_campaigns", "inventory_deal_id", "TEXT"),
+        ("aw_campaigns", "updated_at", "TEXT"),
     ]
     for table, column, ddl in new_columns:
         if BACKEND == "sqlite":
@@ -3061,6 +3096,12 @@ def _migrate_adswizz_v9(cur):
             cur.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
         else:
             cur.execute(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column} {ddl}")
+
+    # Rows written before updated_at existed get a timestamp so
+    # GET /orders?modifiedAfter= can compare them.
+    stamp = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+    for table in ("aw_orders", "aw_campaigns"):
+        cur.execute(f"UPDATE {table} SET updated_at = %s WHERE updated_at IS NULL", (stamp,))
 
 
 def _seed_adswizz(cur, now):
@@ -3104,17 +3145,18 @@ def _seed_adswizz(cur, now):
         cur.execute(
             "INSERT INTO aw_orders (name, advertiser_id, start_date, end_date, "
             "objective_type, objective_value, objective_currency, objective_unlimited, "
-            "comments, archived, created_at) "
-            "VALUES (%s,%s,%s,%s,'IMPRESSIONS',%s,'USD',false,%s,false,%s) RETURNING id",
+            "comments, archived, created_at, updated_at) "
+            "VALUES (%s,%s,%s,%s,'IMPRESSIONS',%s,'USD',false,%s,false,%s,%s) RETURNING id",
             (oname, adv_ids[i % len(adv_ids)],
              "2025-01-01T00:00:00Z", "2025-06-30T23:59:59Z",
-             500000 * (i + 1), f"Mock order {i+1}", now))
+             500000 * (i + 1), f"Mock order {i+1}", now, now))
         order_ids.append(cur.fetchone()["id"])
 
     # --- Campaigns ---
     campaign_types = ["STANDARD", "FILLER", "STANDARD", "SPONSORSHIP", "STANDARD", "INTERACTIVE"]
     statuses = ["RUNNING", "PAUSED", "READY", "COMPLETED", "DRAFT", "RUNNING"]
-    pacing_types = ["EVENLY", "ASAP", "EVENLY", "EVENLY", "ASAP", "EVENLY"]
+    pacing_types = ["EVENLY", "AS_FAST_AS_POSSIBLE", "EVENLY", "EVENLY",
+                    "AS_FAST_AS_POSSIBLE", "EVENLY"]
     camp_ids = []
     for i in range(6):
         cur.execute(
@@ -3122,8 +3164,9 @@ def _seed_adswizz(cur, now):
             "(name, campaign_type, advertiser_id, order_id, status, billing, "
             "start_date, end_date, revenue_type, revenue_value, revenue_currency, "
             "objective_type, objective_value, objective_unlimited, "
-            "pacing_type, pacing_priority, comments, external_reference, archived, created_at) "
-            "VALUES (%s,%s,%s,%s,%s,'SOLD',%s,%s,'CPM',%s,'USD','IMPRESSIONS',%s,false,%s,%s,%s,%s,false,%s) "
+            "pacing_type, pacing_priority, comments, external_reference, archived, created_at, "
+            "updated_at) "
+            "VALUES (%s,%s,%s,%s,%s,'SOLD',%s,%s,'CPM',%s,'USD','IMPRESSIONS',%s,false,%s,%s,%s,%s,false,%s,%s) "
             "RETURNING id",
             (f"Campaign {i+1} - Audio {'Spring' if i < 3 else 'Summer'}",
              campaign_types[i], adv_ids[i % len(adv_ids)],
@@ -3133,7 +3176,7 @@ def _seed_adswizz(cur, now):
              round(random.uniform(2.0, 12.0), 2),
              random.randint(50000, 500000),
              pacing_types[i], random.randint(1, 8),
-             f"Mock campaign {i+1}", f"EXT-AW-{1000+i}", now))
+             f"Mock campaign {i+1}", f"EXT-AW-{1000+i}", now, now))
         camp_ids.append(cur.fetchone()["id"])
 
     # --- Ads ---
@@ -3208,6 +3251,18 @@ def _seed_adswizz(cur, now):
                 "INSERT INTO aw_zone_group_zones (zone_group_id, zone_id) "
                 "VALUES (%s,%s) ON CONFLICT DO NOTHING",
                 (zgid, zid))
+
+    # Targeting for the first ad of the first campaign, so GET targeting-rules
+    # has something to show out of the box.
+    cur.execute("SELECT id FROM aw_ads WHERE campaign_id = %s ORDER BY id LIMIT 1",
+                (camp_ids[0],))
+    first_ad = cur.fetchone()
+    if first_ad:
+        cur.execute(
+            "INSERT INTO aw_ad_targeting "
+            "(ad_id, zone_ids, zone_group_ids, delivery_instructions, rules, updated_at) "
+            "VALUES (%s,%s,%s,%s,%s,%s)",
+            (first_ad["id"], "[]", f"[{zg_ids[0]}]", '{"adBreakPositions": []}', "[]", now))
 
     # --- Categories (IAB-style) ---
     parent_cats = [
