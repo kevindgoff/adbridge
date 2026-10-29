@@ -16,7 +16,7 @@ platforms:
     docs: https://docs.adswizz.com/domain-api/v9/
     spec: https://docs.adswizz.com/domain-api/v9/openapi.json
     base_url: https://api.adswizz.com/domain
-    retrieved: 2026-09-28
+    retrieved: 2026-10-29  # re-read for order push (orders, campaigns, ads, targeting)
     # v8 (superseded, no longer mocked): https://docs.adswizz.com/domain-api/v8/openapi.json
 
   basisnet:

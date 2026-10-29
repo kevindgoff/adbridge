@@ -5,7 +5,7 @@
 - Branch: `adswizz-order-push` (from `main` @ `70108af`)
 - Module: `app/routes/adswizz.py` (prefix `/adswizz/v9`)
 - Source of truth: AdsWizz Domain API v9 spec, `https://docs.adswizz.com/domain-api/v9/openapi.json` (listed in `platform_api_sources.yml`, re-read 2026-10-29)
-- Status: plan only, no code changed yet
+- Status: implemented on this branch (see "Decisions" and "What was built" at the end)
 
 ## Goal
 
@@ -143,3 +143,37 @@ Require the `agency` header on all AdsWizz routes (400 `ErrorResponse` if missin
 4. **Do you need ad units and campaign duplicate?** These are used for companion audio and display ads and for cloning lines. I'd skip them unless the push uses them.
 5. **Should an ad with an unknown `creativeIdentifier` be rejected?** Or accepted as is?
 6. **Should the `agency` header be required (Phase 4)?** It would sit behind an env flag, off by default.
+
+## Decisions (2026-10-29)
+
+1. **Client sequence:** not needed. The mock should work from the Swagger page, so the push endpoints ship with example request bodies that work against the seed data.
+2. **Don't break existing users.** Response changes only add fields. Orders, campaigns, and ads keep their snake_case keys and also return the spec's camelCase keys. Error bodies keep `detail` and also return `code`, `message`, and `errors` at the top level. Archive/unarchive keep returning `200`, not the spec's `204`. Advertisers, agencies, publishers, and zones are unchanged. A full switch to the spec shape can come later.
+3. **Launch stays permissive.** Phase 3 is dropped.
+4. **Ad units and campaign duplicate are skipped.**
+5. **No creative work.** `creativeIdentifier` is not stored or checked, and `POST /creatives` is unchanged.
+6. **`agency` header:** stays optional, and no env flag was added. Requiring it would add a step to every Swagger call without catching any real push bugs. The flag can be added later if a client needs the check.
+
+## What was built
+
+- `app/routes/adswizz.py`
+  - New endpoints: `POST /campaigns/check-duplicates`, `POST /campaigns/{id}/ads/{adId}/zone-groups`, `GET/PUT /campaigns/{id}/ads/{adId}/targeting-rules`, `GET /ads/{adId}`, `GET /ads/{adId}/targeting-rules`.
+  - `GET /orders?modifiedAfter=` and `GET /targeting-zones?zoneGroupIds=&creativeType=` filters.
+  - `cappingRules` on orders, campaigns, and ads. `categoryIds`, `adClashing`, and `inventoryPack.dealId` on campaigns. `objective.managedObjective` on orders.
+  - Validation for required fields, enums, date order, and unknown ids. These return 400 or 404 instead of 500.
+  - The error envelope is applied through a router-scoped `APIRoute` subclass, so other platforms are untouched.
+- `app/database.py`
+  - New tables `aw_capping_rules` and `aw_ad_targeting`, plus new columns on `aw_orders` and `aw_campaigns`.
+  - `_migrate_adswizz_v9` adds the columns to existing databases and backfills `updated_at`.
+  - The seed gives one ad targeting, and seeded pacing uses `AS_FAST_AS_POSSIBLE` instead of `ASAP`. Existing `ASAP` rows are still accepted on update.
+- `tests/test_adswizz.py`: tests for an end-to-end push, validation errors, backward compatibility of seeded data, and the targeting-zone filters.
+
+## Verification done
+
+- `pytest`: 23 passed on SQLite.
+- Upgrade path: a database seeded by `main` was opened with this branch, on both SQLite and Postgres 16 (throwaway container). The push tests pass on both.
+- Swagger: `/docs` loads, the new routes appear, and every example body succeeds when run in push order.
+
+## Found along the way (not fixed, separate from this work)
+
+- On `main`, `init_db()` fails on a **fresh Postgres database**. `line_items` references `properties(id)` (and `vendors(id)`) before those tables are created in `SCHEMA`. SQLite doesn't enforce the order, which is why the tests pass. Existing Postgres volumes that were already initialised are not affected.
+- `pytest` and `httpx` are needed to run the tests but are not in `requirements.txt`.

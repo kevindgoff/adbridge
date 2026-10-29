@@ -21,20 +21,102 @@ Replaces the former v8 mock. v9 deltas vs v8:
     removed; VIDEO ads accept `missingCreative`.
   - New: multipart creative upload, audiogram creatives.
   - Removed: GET /commons/openrtb-buyers (never mocked).
+
+Order push support (see docs/plans/adswizz-order-push.md):
+  - Orders, campaigns, and ads also return the spec's camelCase fields
+    (advertiserId, startDate, cappingRules, ...). The older snake_case keys
+    are kept so existing callers don't break.
+  - cappingRules, categoryIds, adClashing, inventoryPack.dealId and
+    objective.managedObjective are stored and returned.
+  - Missing required fields and unknown advertiser/order/campaign ids return
+    400/404 instead of 500.
+  - Error bodies carry the spec ErrorResponse fields (code, message, errors)
+    at the top level, plus the original `detail` key.
+  - New: POST /campaigns/check-duplicates, POST .../ads/{adId}/zone-groups,
+    GET/PUT .../ads/{adId}/targeting-rules, GET /ads/{adId},
+    GET /ads/{adId}/targeting-rules, GET /orders?modifiedAfter=.
+  - Launch stays permissive and the `agency` header stays optional.
 """
 
+import json
 import math
+import re
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Body, Header, Response
+from fastapi.responses import JSONResponse
+from fastapi.routing import APIRoute
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from typing import Optional, List
 
 from app.database import get_db
 
-router = APIRouter(prefix="/adswizz/v9")
+
+# ── Error envelope ────────────────────────────────────────────────────────────
+
+def _error_body(detail):
+    """Spec ErrorResponse at the top level; `detail` kept for existing callers."""
+    if isinstance(detail, dict):
+        code = detail.get("code", "error")
+        message = detail.get("message", "")
+        errors = detail.get("errors") or []
+    else:
+        code, message, errors = "error", str(detail), []
+    return {"code": code, "message": message, "errors": errors, "detail": detail}
+
+
+class _AdsWizzRoute(APIRoute):
+    """Render HTTPExceptions raised by AdsWizz handlers as ErrorResponse bodies.
+
+    Scoped to this router, so other platforms keep FastAPI's default envelope.
+    """
+
+    def get_route_handler(self):
+        original = super().get_route_handler()
+
+        async def handler(request):
+            try:
+                return await original(request)
+            except StarletteHTTPException as exc:
+                return JSONResponse(_error_body(exc.detail), status_code=exc.status_code,
+                                    headers=getattr(exc, "headers", None))
+
+        return handler
+
+
+router = APIRouter(prefix="/adswizz/v9", route_class=_AdsWizzRoute)
 
 # ── v9 enums ──────────────────────────────────────────────────────────────────
+
+OBJECTIVE_TYPES = {"IMPRESSIONS", "PRICE"}
+BILLING_TYPES = {"SOLD", "UNSOLD"}
+REVENUE_TYPES = {"CPM"}
+# "ASAP" is not in the spec but older seed data used it; accept it so a
+# GET-then-PUT of a seeded campaign still works.
+PACING_TYPES = {"EVENLY", "AS_FAST_AS_POSSIBLE", "PREDICTIVE", "ASAP"}
+CAPPING_UNITS = {"MINUTES", "HOURS", "DAYS", "WEEKS", "MONTHS", "EPISODE"}
+TARGETING_RULE_TYPES = {
+    "WEATHER_SEGMENTS", "TIME_HOURLY_WEEK_DAY", "TIME_DATE_INTERVAL", "TIME_DATE",
+    "SITE_ZONE_GROUP", "SITE_ZONE", "SITE_VARIABLE", "SITE_REFERRINGPAGE", "SITE_PAGEURL",
+    "SITE_CHANNEL", "ROLLING_WINDOW", "PUBLISHER_IMPORTED_SEGMENTS",
+    "PUBLISHER_ATTRIBUTES_SEGMENTS", "POI_SEGMENTS", "POI_SEGMENT", "PODCAST_RSS_FEED",
+    "PODCAST_PUBLICATION", "PODCAST_EPISODES_V2", "PODCAST_CONTEXTUAL", "PODCAST_CONSUMPTION",
+    "PODCAST_BRAND_SAFETY", "PODCAST_AD_BREAK", "PODCAST_TAGS", "PLAYER_NAME_SEGMENTS",
+    "OPTIMISATION_SEGMENTS", "OPERATING_SYSTEM", "LOCATION_SUBREGION", "LOCATION_REGION",
+    "LOCATION_POSTALCODE", "LOCATION_MSA", "LOCATION_LATLONG", "LOCATION_ISP", "LOCATION_DMA",
+    "LOCATION_MEDIA_GEO_TARGET", "LOCATION_COUNTRY", "LOCATION_CMA", "LOCATION_CITY",
+    "LOCATION_ACCURACY", "LOCATION", "LISTENING_CONTEXT_SEGMENTS", "LABS_SEGMENTS",
+    "INVENTORY_ATTRIBUTES_SEGMENTS", "DMP_VARIABLE", "DMP_SUPPLY_VARIABLE", "DMP_PUBLISHER",
+    "DMP_DEMOGRAPHIC", "DEVICE_TYPE_SEGMENTS", "DEVICE_OS_FAMILY_SEGMENTS",
+    "DEVICE_MANUFACTURER", "DEVICE", "DEMOGRAPHIC_SEGMENTS", "CUSTOM_BEHAVIOURAL_SEGMENTS",
+    "CUSTOM_AUDIENCES_SEGMENTS", "ONBOARDED_AUDIENCES_SEGMENTS", "CLIENT_USERAGENT",
+    "CLIENT_LANGUAGE", "CLIENT_IP", "CLIENT_DOMAIN", "CLIENT_BROWSER", "BEHAVIOURAL_SEGMENTS",
+    "ADVERTISER_IMPORTED_SEGMENTS", "SITE_APP",
+}
+# targeting-zones creativeType → zone type stored in aw_zones
+CREATIVE_TYPE_ZONE = {"AUDIO": "AUDIO", "HOST_READ": "AUDIO", "TALENT_READ": "AUDIO",
+                      "INTERACTIVE_VOICE": "AUDIO", "DISPLAY": "DISPLAY", "VIDEO": "VIDEO"}
 
 CAMPAIGN_TYPES = {"STANDARD", "FILLER", "INTERACTIVE", "SPONSORSHIP"}
 REMOVED_AD_TYPES = {"REDIRECT_DAAST", "REDIRECT_TARGETSPOT", "REDIRECT_VAST_CLIENT"}
@@ -85,6 +167,163 @@ def _agency_id(agency: Optional[str]):
         return int(agency) if agency is not None else None
     except ValueError:
         return None
+
+
+# ── Order push helpers ────────────────────────────────────────────────────────
+
+TS_FMT = "%Y-%m-%dT%H:%M:%S.%fZ"
+
+# Swagger "Try it out" bodies for the order push sequence (ids match seed data)
+_EX_ORDER = {"push": {"summary": "Order with a frequency cap", "value": {
+    "name": "WO Order 123", "advertiserId": 1,
+    "startDate": "2026-11-01T00:00:00Z", "endDate": "2026-11-30T23:59:59Z",
+    "objective": {"type": "IMPRESSIONS", "value": 500000, "currency": "USD", "unlimited": False},
+    "externalReference": "WO-123",
+    "cappingRules": [{"id": None, "unit": "DAYS", "unitMultiplier": 1, "limit": 3}],
+}}}
+_EX_CAMPAIGN = {"push": {"summary": "Order line as a campaign", "value": {
+    "name": "WO Order 123 - Line 1", "campaignType": "STANDARD", "advertiserId": 1, "orderId": 1,
+    "startDate": "2026-11-01T00:00:00Z", "endDate": "2026-11-30T23:59:59Z",
+    "campaignRevenue": {"type": "CPM", "value": 12.5, "currency": "USD"},
+    "billing": "SOLD", "objective": {"type": "IMPRESSIONS", "value": 250000},
+    "campaignDeliveryPacing": {"type": "EVENLY", "priority": 5},
+    "categoryIds": [1], "cappingRules": [], "externalReference": "WO-123-L1",
+}}}
+_EX_DUPLICATES = {"push": {"summary": "Check before creating a line", "value": {
+    "advertiserId": 1, "startDate": "2026-11-01T00:00:00Z", "endDate": "2026-11-30T23:59:59Z",
+    "objectiveValue": 250000, "objectiveType": "IMPRESSIONS",
+}}}
+_EX_TARGETING = {"push": {"summary": "Zone groups plus a country rule", "value": {
+    "zoneIds": [], "zoneGroupIds": [1, 2],
+    "deliveryInstructions": {"adBreakPositions": []},
+    "rules": [{"type": "LOCATION_COUNTRY", "values": ["US"]}],
+}}}
+_EX_ZONE_GROUPS = {"push": {"summary": "Link to zone groups 1 and 2", "value": [1, 2]}}
+
+
+def _ts():
+    """updated_at timestamp; one fixed format so string comparison orders correctly."""
+    return datetime.now(timezone.utc).strftime(TS_FMT)
+
+
+def _parse_dt(value):
+    """Parse the spec's yyyy-MM-dd'T'HH:mm:ssZ (and common ISO variants). None if unparseable."""
+    if not isinstance(value, str) or not value.strip():
+        return None
+    s = value.strip()
+    if s.endswith("Z"):
+        s = s[:-1] + "+00:00"
+    elif re.search(r"T.*[+-]\d{4}$", s):
+        s = s[:-2] + ":" + s[-2:]
+    try:
+        dt = datetime.fromisoformat(s)
+    except ValueError:
+        return None
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+
+def _require(body, *fields):
+    for f in fields:
+        if body.get(f) in (None, ""):
+            _400(f, f"{f} is required")
+
+
+def _enum(element, value, allowed):
+    if value is not None and value not in allowed:
+        _400(element, f"{element} must be one of {sorted(allowed)}")
+
+
+def _check_dates(body):
+    """Reject endDate before startDate. Unparseable dates are let through (permissive)."""
+    start, end = _parse_dt(body.get("startDate")), _parse_dt(body.get("endDate"))
+    if start and end and end < start:
+        _400("endDate", "endDate must not be before startDate")
+
+
+def _object(body, key):
+    value = body.get(key)
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        _400(key, f"{key} must be an object")
+    return value
+
+
+def _int_list(value, element):
+    if value is None:
+        return []
+    if not isinstance(value, list) or not all(isinstance(v, int) and not isinstance(v, bool)
+                                              for v in value):
+        _400(element, f"{element} must be an array of integers")
+    return value
+
+
+def _exists(conn, table, id_):
+    return _one(conn, f"SELECT id FROM {table} WHERE id = %s", (id_,)) is not None
+
+
+def _check_ids_exist(conn, table, ids, element):
+    if not ids:
+        return
+    placeholders = ",".join(["%s"] * len(ids))
+    found = {r["id"] for r in _q(conn, f"SELECT id FROM {table} WHERE id IN ({placeholders})",
+                                 tuple(ids)).fetchall()}
+    missing = sorted(set(ids) - found)
+    if missing:
+        _400(element, f"Unknown {element}: {missing}")
+
+
+def _json_load(value, default):
+    if value in (None, ""):
+        return default
+    try:
+        return json.loads(value)
+    except (TypeError, ValueError):
+        return default
+
+
+# ── Capping rules (orders, campaigns, ads) ───────────────────────────────────
+
+def _validate_capping(rules, element="cappingRules"):
+    if rules is None:
+        return
+    if not isinstance(rules, list):
+        _400(element, f"{element} must be an array")
+    for i, rule in enumerate(rules):
+        if not isinstance(rule, dict):
+            _400(f"{element}[{i}]", "capping rule must be an object")
+        for field in ("unit", "unitMultiplier", "limit"):
+            if rule.get(field) is None:
+                _400(f"{element}[{i}].{field}", f"{field} is required")
+        _enum(f"{element}[{i}].unit", rule["unit"], CAPPING_UNITS)
+
+
+def _save_capping(conn, owner_type, owner_id, rules):
+    """Replace an owner's rules. Spec: `null` or [] removes them; `id: null` is a new rule."""
+    rules = rules or []
+    existing = {r["id"] for r in _q(
+        conn, "SELECT id FROM aw_capping_rules WHERE owner_type = %s AND owner_id = %s",
+        (owner_type, owner_id)).fetchall()}
+    kept = set()
+    for rule in rules:
+        values = (rule["unit"], rule["unitMultiplier"], rule["limit"])
+        if rule.get("id") in existing:
+            _q(conn, """UPDATE aw_capping_rules SET unit = %s, unit_multiplier = %s,
+                        cap_limit = %s WHERE id = %s""", (*values, rule["id"]))
+            kept.add(rule["id"])
+        else:
+            _q(conn, """INSERT INTO aw_capping_rules
+                        (owner_type, owner_id, unit, unit_multiplier, cap_limit)
+                        VALUES (%s,%s,%s,%s,%s)""", (owner_type, owner_id, *values))
+    for rule_id in existing - kept:
+        _q(conn, "DELETE FROM aw_capping_rules WHERE id = %s", (rule_id,))
+
+
+def _load_capping(conn, owner_type, owner_id):
+    rows = _q(conn, """SELECT * FROM aw_capping_rules WHERE owner_type = %s AND owner_id = %s
+                       ORDER BY id""", (owner_type, owner_id)).fetchall()
+    return [{"id": r["id"], "unit": r["unit"], "unitMultiplier": r["unit_multiplier"],
+             "limit": r["cap_limit"]} for r in rows]
 
 
 # ── Agencies ──────────────────────────────────────────────────────────────────
@@ -228,11 +467,11 @@ def _format_campaign_light(row):
         "status": row.get("status"),
         "startDate": row.get("start_date"),
         "endDate": row.get("end_date"),
-        "archived": row.get("archived", False),
+        "archived": bool(row.get("archived")),
         "objective": {
             "type": row.get("objective_type"),
             "value": row.get("objective_value"),
-            "unlimited": row.get("objective_unlimited") or False,
+            "unlimited": bool(row.get("objective_unlimited")),
         },
     }
 
@@ -242,8 +481,24 @@ def _check_campaign_type(body):
     if ctype not in CAMPAIGN_TYPES:
         _400("campaignType", f"campaignType must be one of {sorted(CAMPAIGN_TYPES)}")
 
-def _format_campaign(row):
-    """Nest revenue, objective, and pacing into the AdsWizz response shape."""
+
+def _validate_campaign_body(body):
+    """Shared create/update checks. Optional blocks keep the mock's defaults."""
+    _require(body, "name")
+    _check_campaign_type(body)
+    _enum("billing", body.get("billing"), BILLING_TYPES)
+    _enum("campaignRevenue.type", _object(body, "campaignRevenue").get("type"), REVENUE_TYPES)
+    _enum("objective.type", _object(body, "objective").get("type"), OBJECTIVE_TYPES)
+    _enum("campaignDeliveryPacing.type",
+          _object(body, "campaignDeliveryPacing").get("type"), PACING_TYPES)
+    _object(body, "inventoryPack")
+    _int_list(body.get("categoryIds"), "categoryIds")
+    _validate_capping(body.get("cappingRules"))
+    _check_dates(body)
+
+
+def _format_campaign(row, conn=None):
+    """SavedCampaign shape. Snake_case columns stay alongside the spec's camelCase keys."""
     rev_type = row.pop("revenue_type", None)
     rev_value = row.pop("revenue_value", None)
     rev_currency = row.pop("revenue_currency", None)
@@ -253,13 +508,34 @@ def _format_campaign(row):
     obj_type = row.pop("objective_type", None)
     obj_value = row.pop("objective_value", None)
     obj_unlimited = row.pop("objective_unlimited", None)
-    row["objective"] = {"type": obj_type, "value": obj_value, "unlimited": obj_unlimited or False}
+    row["objective"] = {"type": obj_type, "value": obj_value, "unlimited": bool(obj_unlimited)}
 
     pacing_type = row.pop("pacing_type", None)
     pacing_priority = row.pop("pacing_priority", None)
     if pacing_type:
         row["campaignDeliveryPacing"] = {"type": pacing_type, "priority": pacing_priority}
 
+    row["archived"] = bool(row.get("archived"))
+    row["campaignType"] = row.get("campaign_type")
+    row["advertiserId"] = row.get("advertiser_id")
+    row["orderId"] = row.get("order_id")
+    row["startDate"] = row.get("start_date")
+    row["endDate"] = row.get("end_date")
+    row["externalReference"] = row.get("external_reference")
+    row["categoryIds"] = _json_load(row.pop("category_ids", None), [])
+    row["adClashing"] = bool(row.pop("ad_clashing", False))
+    deal_id = row.pop("inventory_deal_id", None)
+    if deal_id:
+        row["inventoryPack"] = {"dealId": deal_id}
+    if conn is not None:
+        row["cappingRules"] = _load_capping(conn, "campaign", row["id"])
+    return row
+
+
+def _get_campaign_row(conn, campaign_id):
+    row = _one(conn, "SELECT * FROM aw_campaigns WHERE id = %s", (campaign_id,))
+    if not row:
+        _404("Campaign", campaign_id)
     return row
 
 
@@ -288,15 +564,55 @@ def list_campaigns(limit: int = Query(100, ge=1, le=1000),
         sql += " AND (name ILIKE %s OR CAST(id AS TEXT) ILIKE %s)"
         params.extend([f"%{query}%", f"%{query}%"])
     rows = _paginate(conn, sql, tuple(params), limit, page)
-    return [_format_campaign(r) for r in rows]
+    return [_format_campaign(r, conn) for r in rows]
+
+
+@router.post("/campaigns/check-duplicates")
+def check_duplicate_campaigns(body: dict = Body(..., openapi_examples=_EX_DUPLICATES),
+                              conn=Depends(get_db)):
+    """ValidationResult: campaigns with the same advertiser, dates and objective."""
+    _require(body, "advertiserId", "startDate", "endDate")
+    start, end = _parse_dt(body["startDate"]), _parse_dt(body["endDate"])
+    if not start:
+        _400("startDate", "startDate must be a date-time (yyyy-MM-dd'T'HH:mm:ssZ)")
+    if not end:
+        _400("endDate", "endDate must be a date-time (yyyy-MM-dd'T'HH:mm:ssZ)")
+    _enum("objectiveType", body.get("objectiveType"), OBJECTIVE_TYPES)
+
+    rows = _q(conn, "SELECT * FROM aw_campaigns WHERE advertiser_id = %s ORDER BY id",
+              (body["advertiserId"],)).fetchall()
+    events = []
+    for r in rows:
+        if r.get("archived"):
+            continue
+        if _parse_dt(r.get("start_date")) != start or _parse_dt(r.get("end_date")) != end:
+            continue
+        if body.get("objectiveValue") is not None and r.get("objective_value") != body["objectiveValue"]:
+            continue
+        if body.get("objectiveType") and r.get("objective_type") != body["objectiveType"]:
+            continue
+        events.append({
+            "code": "campaign.duplicate",
+            "message": f"Campaign {r['id']} ({r['name']}) has the same advertiser, "
+                       "dates and objective",
+            "arguments": [r["id"]],
+            "invalidValue": r["id"],
+        })
+    return {"validationEvents": events, "valid": not events}
 
 
 @router.post("/campaigns", status_code=201)
-def create_campaign(body: dict = Body(...), conn=Depends(get_db)):
-    _check_campaign_type(body)
-    rev = body.get("campaignRevenue", {})
-    obj = body.get("objective", {})
-    pacing = body.get("campaignDeliveryPacing", {})
+def create_campaign(body: dict = Body(..., openapi_examples=_EX_CAMPAIGN), conn=Depends(get_db)):
+    _require(body, "advertiserId")
+    _validate_campaign_body(body)
+    if not _exists(conn, "aw_advertisers", body["advertiserId"]):
+        _404("Advertiser", body["advertiserId"])
+    if body.get("orderId") is not None and not _exists(conn, "aw_orders", body["orderId"]):
+        _404("Order", body["orderId"])
+    rev = _object(body, "campaignRevenue")
+    obj = _object(body, "objective")
+    pacing = _object(body, "campaignDeliveryPacing")
+    now = _ts()
     cur = conn.cursor()
     cur.execute(
         """INSERT INTO aw_campaigns
@@ -304,8 +620,10 @@ def create_campaign(body: dict = Body(...), conn=Depends(get_db)):
             start_date, end_date, revenue_type, revenue_value, revenue_currency,
             objective_type, objective_value, objective_unlimited,
             pacing_type, pacing_priority, comments, external_reference,
-            archived, created_at)
-           VALUES (%s,%s,%s,%s,'DRAFT',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,false,NOW())
+            category_ids, ad_clashing, inventory_deal_id,
+            archived, created_at, updated_at)
+           VALUES (%s,%s,%s,%s,'DRAFT',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
+                   false,%s,%s)
            RETURNING *""",
         (body["name"], body.get("campaignType", "STANDARD"),
          body["advertiserId"], body.get("orderId"),
@@ -315,96 +633,96 @@ def create_campaign(body: dict = Body(...), conn=Depends(get_db)):
          obj.get("type", "IMPRESSIONS"), obj.get("value"),
          obj.get("unlimited", False),
          pacing.get("type", "EVENLY"), pacing.get("priority", 5),
-         body.get("comments"), body.get("externalReference")),
+         body.get("comments"), body.get("externalReference"),
+         json.dumps(body.get("categoryIds") or []), bool(body.get("adClashing", False)),
+         _object(body, "inventoryPack").get("dealId"), now, now),
     )
+    row = dict(cur.fetchone())
+    _save_capping(conn, "campaign", row["id"], body.get("cappingRules"))
     conn.commit()
-    return _format_campaign(dict(cur.fetchone()))
+    return _format_campaign(row, conn)
 
 
 @router.get("/campaigns/{campaign_id}")
 def get_campaign(campaign_id: int, conn=Depends(get_db)):
-    row = _one(conn, "SELECT * FROM aw_campaigns WHERE id = %s", (campaign_id,))
-    if not row:
-        _404("Campaign", campaign_id)
-    return _format_campaign(row)
+    return _format_campaign(_get_campaign_row(conn, campaign_id), conn)
 
 
 @router.put("/campaigns/{campaign_id}")
 def update_campaign(campaign_id: int, body: dict = Body(...), conn=Depends(get_db)):
-    _check_campaign_type(body)
-    existing = _one(conn, "SELECT * FROM aw_campaigns WHERE id = %s", (campaign_id,))
-    if not existing:
-        _404("Campaign", campaign_id)
-    rev = body.get("campaignRevenue", {})
-    obj = body.get("objective", {})
-    pacing = body.get("campaignDeliveryPacing", {})
+    _validate_campaign_body(body)
+    _get_campaign_row(conn, campaign_id)
+    rev = _object(body, "campaignRevenue")
+    obj = _object(body, "objective")
+    pacing = _object(body, "campaignDeliveryPacing")
     _q(conn,
         """UPDATE aw_campaigns SET name=%s, campaign_type=%s, billing=%s,
            start_date=%s, end_date=%s, revenue_type=%s, revenue_value=%s,
            revenue_currency=%s, objective_type=%s, objective_value=%s,
            objective_unlimited=%s, pacing_type=%s, pacing_priority=%s,
-           comments=%s, external_reference=%s WHERE id=%s""",
+           comments=%s, external_reference=%s, category_ids=%s, ad_clashing=%s,
+           inventory_deal_id=%s, updated_at=%s WHERE id=%s""",
         (body["name"], body.get("campaignType", "STANDARD"),
          body.get("billing"), body.get("startDate"), body.get("endDate"),
          rev.get("type"), rev.get("value"), rev.get("currency"),
          obj.get("type"), obj.get("value"), obj.get("unlimited", False),
          pacing.get("type"), pacing.get("priority"),
-         body.get("comments"), body.get("externalReference"), campaign_id))
+         body.get("comments"), body.get("externalReference"),
+         json.dumps(body.get("categoryIds") or []), bool(body.get("adClashing", False)),
+         _object(body, "inventoryPack").get("dealId"), _ts(), campaign_id))
+    _save_capping(conn, "campaign", campaign_id, body.get("cappingRules"))
     conn.commit()
-    return _format_campaign(dict(_one(conn, "SELECT * FROM aw_campaigns WHERE id = %s", (campaign_id,))))
+    return _format_campaign(_get_campaign_row(conn, campaign_id), conn)
 
 
 @router.patch("/campaigns/{campaign_id}")
 def campaign_action(campaign_id: int,
                     action: str = Query(...),
                     conn=Depends(get_db)):
-    """Launch, pause, or resume a campaign."""
-    row = _one(conn, "SELECT * FROM aw_campaigns WHERE id = %s", (campaign_id,))
-    if not row:
-        _404("Campaign", campaign_id)
+    """Launch, pause, or resume a campaign. Permissive: no launch preconditions."""
+    _get_campaign_row(conn, campaign_id)
     status_map = {"launch": "RUNNING", "pause": "PAUSED", "resume": "RUNNING"}
     new_status = status_map.get(action)
     if not new_status:
         raise HTTPException(400, {"code": "invalid.action", "message": f"Unknown action: {action}"})
-    _q(conn, "UPDATE aw_campaigns SET status = %s WHERE id = %s", (new_status, campaign_id))
+    _q(conn, "UPDATE aw_campaigns SET status = %s, updated_at = %s WHERE id = %s",
+       (new_status, _ts(), campaign_id))
     conn.commit()
-    return _format_campaign(dict(_one(conn, "SELECT * FROM aw_campaigns WHERE id = %s", (campaign_id,))))
+    return _format_campaign(_get_campaign_row(conn, campaign_id), conn)
 
 
 @router.put("/campaigns/{campaign_id}/archive")
 def archive_campaign(campaign_id: int, conn=Depends(get_db)):
-    row = _one(conn, "SELECT * FROM aw_campaigns WHERE id = %s", (campaign_id,))
-    if not row:
-        _404("Campaign", campaign_id)
-    _q(conn, "UPDATE aw_campaigns SET archived = true WHERE id = %s", (campaign_id,))
+    _get_campaign_row(conn, campaign_id)
+    _q(conn, "UPDATE aw_campaigns SET archived = true, updated_at = %s WHERE id = %s",
+       (_ts(), campaign_id))
     conn.commit()
     return None
 
 
 @router.put("/campaigns/{campaign_id}/unarchive")
 def unarchive_campaign(campaign_id: int, conn=Depends(get_db)):
-    row = _one(conn, "SELECT * FROM aw_campaigns WHERE id = %s", (campaign_id,))
-    if not row:
-        _404("Campaign", campaign_id)
-    _q(conn, "UPDATE aw_campaigns SET archived = false WHERE id = %s", (campaign_id,))
+    _get_campaign_row(conn, campaign_id)
+    _q(conn, "UPDATE aw_campaigns SET archived = false, updated_at = %s WHERE id = %s",
+       (_ts(), campaign_id))
     conn.commit()
     return None
 
 
 # ── Ads ───────────────────────────────────────────────────────────────────────
 
-def _format_ad(row):
+def _format_ad(row, conn=None):
     """Shape flat DB row into AdsWizz ad response."""
     ad = {
         "id": row["id"],
         "campaignId": row["campaign_id"],
-        "archived": row.get("archived", False),
+        "archived": bool(row.get("archived")),
         "type": row["type"],
         "adUnitId": row.get("ad_unit_id", 0),
         "data": {
             "name": row["name"],
             "status": row["status"],
-            "includedInCampaignObjective": row.get("included_in_objective", True),
+            "includedInCampaignObjective": bool(row.get("included_in_objective", True)),
             "weight": row.get("weight", 1),
             "comments": row.get("comments"),
             "externalReference": row.get("external_reference"),
@@ -418,10 +736,24 @@ def _format_ad(row):
     }
     if row["type"] == "VIDEO":
         ad["data"]["missingCreative"] = bool(row.get("missing_creative"))
+    if conn is not None:
+        ad["data"]["cappingRules"] = _load_capping(conn, "ad", row["id"])
     return ad
 
 
+def _get_ad_row(conn, ad_id, campaign_id=None):
+    if campaign_id is None:
+        row = _one(conn, "SELECT * FROM aw_ads WHERE id = %s", (ad_id,))
+    else:
+        row = _one(conn, "SELECT * FROM aw_ads WHERE id = %s AND campaign_id = %s",
+                   (ad_id, campaign_id))
+    if not row:
+        _404("Ad", ad_id)
+    return row
+
+
 def _check_ad_body(body):
+    _validate_capping(body.get("cappingRules"))
     if body.get("type") in REMOVED_AD_TYPES:
         _400("type", f"Ad type {body['type']} is not supported in v9")
     if body.get("missingCreative"):
@@ -463,9 +795,16 @@ def list_campaign_ads(campaign_id: int,
              "archived": r.get("archived", False)} for r in rows]
 
 
+@router.get("/ads/{ad_id}")
+def get_ad_by_id(ad_id: int, conn=Depends(get_db)):
+    return _format_ad(_get_ad_row(conn, ad_id), conn)
+
+
 @router.post("/campaigns/{campaign_id}/ads", status_code=201)
 def create_ad(campaign_id: int, body: dict = Body(...), conn=Depends(get_db)):
+    _require(body, "name", "type")
     _check_ad_body(body)
+    _get_campaign_row(conn, campaign_id)
     cur = conn.cursor()
     cur.execute(
         """INSERT INTO aw_ads
@@ -484,26 +823,22 @@ def create_ad(campaign_id: int, body: dict = Body(...), conn=Depends(get_db)):
          body.get("durationMilliseconds"), body.get("destinationUrl"),
          bool(body.get("missingCreative", False))),
     )
+    row = dict(cur.fetchone())
+    _save_capping(conn, "ad", row["id"], body.get("cappingRules"))
     conn.commit()
-    return _format_ad(dict(cur.fetchone()))
+    return _format_ad(row, conn)
 
 
 @router.get("/campaigns/{campaign_id}/ads/{ad_id}")
 def get_ad(campaign_id: int, ad_id: int, conn=Depends(get_db)):
-    row = _one(conn, "SELECT * FROM aw_ads WHERE id = %s AND campaign_id = %s",
-               (ad_id, campaign_id))
-    if not row:
-        _404("Ad", ad_id)
-    return _format_ad(row)
+    return _format_ad(_get_ad_row(conn, ad_id, campaign_id), conn)
 
 
 @router.put("/campaigns/{campaign_id}/ads/{ad_id}")
 def update_ad(campaign_id: int, ad_id: int, body: dict = Body(...), conn=Depends(get_db)):
+    _require(body, "name")
     _check_ad_body(body)
-    existing = _one(conn, "SELECT * FROM aw_ads WHERE id = %s AND campaign_id = %s",
-                    (ad_id, campaign_id))
-    if not existing:
-        _404("Ad", ad_id)
+    existing = _get_ad_row(conn, ad_id, campaign_id)
     _q(conn,
         """UPDATE aw_ads SET name=%s, status=%s, weight=%s, comments=%s,
            external_reference=%s, tracking_type=%s, tracking=%s,
@@ -517,102 +852,225 @@ def update_ad(campaign_id: int, ad_id: int, body: dict = Body(...), conn=Depends
          body.get("destinationUrl"),
          bool(body.get("missingCreative", existing.get("missing_creative") or False)),
          ad_id))
+    _save_capping(conn, "ad", ad_id, body.get("cappingRules"))
     conn.commit()
-    return _format_ad(dict(_one(conn, "SELECT * FROM aw_ads WHERE id = %s", (ad_id,))))
+    return _format_ad(_get_ad_row(conn, ad_id), conn)
+
+
+# ── Ad targeting & zone groups ───────────────────────────────────────────────
+
+def _load_targeting(conn, ad_id):
+    """TargetingRulesContainer for an ad; empty lists when nothing has been saved."""
+    row = _one(conn, "SELECT * FROM aw_ad_targeting WHERE ad_id = %s", (ad_id,))
+    if not row:
+        return {"zoneIds": [], "zoneGroupIds": [],
+                "deliveryInstructions": {"adBreakPositions": []}, "rules": []}
+    return {
+        "zoneIds": _json_load(row["zone_ids"], []),
+        "zoneGroupIds": _json_load(row["zone_group_ids"], []),
+        "deliveryInstructions": _json_load(row["delivery_instructions"],
+                                           {"adBreakPositions": []}),
+        "rules": _json_load(row["rules"], []),
+    }
+
+
+def _save_targeting(conn, ad_id, container):
+    _q(conn, "DELETE FROM aw_ad_targeting WHERE ad_id = %s", (ad_id,))
+    _q(conn,
+       """INSERT INTO aw_ad_targeting
+          (ad_id, zone_ids, zone_group_ids, delivery_instructions, rules, updated_at)
+          VALUES (%s,%s,%s,%s,%s,%s)""",
+       (ad_id, json.dumps(container["zoneIds"]), json.dumps(container["zoneGroupIds"]),
+        json.dumps(container["deliveryInstructions"]), json.dumps(container["rules"]), _ts()))
+
+
+@router.get("/ads/{ad_id}/targeting-rules")
+def get_ad_targeting_by_id(ad_id: int, conn=Depends(get_db)):
+    _get_ad_row(conn, ad_id)
+    return _load_targeting(conn, ad_id)
+
+
+@router.get("/campaigns/{campaign_id}/ads/{ad_id}/targeting-rules")
+def get_ad_targeting(campaign_id: int, ad_id: int, conn=Depends(get_db)):
+    _get_ad_row(conn, ad_id, campaign_id)
+    return _load_targeting(conn, ad_id)
+
+
+@router.put("/campaigns/{campaign_id}/ads/{ad_id}/targeting-rules")
+def save_ad_targeting(campaign_id: int, ad_id: int,
+                      body: dict = Body(..., openapi_examples=_EX_TARGETING),
+                      conn=Depends(get_db)):
+    """Replaces the ad's targeting. Rules are validated by `type` only and stored as sent."""
+    _get_ad_row(conn, ad_id, campaign_id)
+    zone_ids = _int_list(body.get("zoneIds"), "zoneIds")
+    zone_group_ids = _int_list(body.get("zoneGroupIds"), "zoneGroupIds")
+    delivery = _object(body, "deliveryInstructions")
+    positions = delivery.get("adBreakPositions") or []
+    if not isinstance(positions, list) or not all(isinstance(p, str) for p in positions):
+        _400("deliveryInstructions.adBreakPositions", "adBreakPositions must be an array of strings")
+    rules = body.get("rules") or []
+    if not isinstance(rules, list):
+        _400("rules", "rules must be an array")
+    for i, rule in enumerate(rules):
+        if not isinstance(rule, dict) or rule.get("type") not in TARGETING_RULE_TYPES:
+            _400(f"rules[{i}].type", "Each rule needs a `type` from the TargetingRule enum")
+    _check_ids_exist(conn, "aw_zones", zone_ids, "zoneIds")
+    _check_ids_exist(conn, "aw_zone_groups", zone_group_ids, "zoneGroupIds")
+
+    container = {"zoneIds": zone_ids, "zoneGroupIds": zone_group_ids,
+                 "deliveryInstructions": {**delivery, "adBreakPositions": positions},
+                 "rules": rules}
+    _save_targeting(conn, ad_id, container)
+    conn.commit()
+    return _load_targeting(conn, ad_id)
+
+
+@router.post("/campaigns/{campaign_id}/ads/{ad_id}/zone-groups")
+def link_ad_zone_groups(campaign_id: int, ad_id: int,
+                        body: List[int] = Body(..., openapi_examples=_EX_ZONE_GROUPS),
+                        conn=Depends(get_db)):
+    """Sets the ad's zone groups; groups not in the request are unlinked (spec)."""
+    _get_ad_row(conn, ad_id, campaign_id)
+    zone_group_ids = sorted(set(body))
+    _check_ids_exist(conn, "aw_zone_groups", zone_group_ids, "zoneGroupIds")
+    container = _load_targeting(conn, ad_id)
+    container["zoneGroupIds"] = zone_group_ids
+    _save_targeting(conn, ad_id, container)
+    conn.commit()
+    return zone_group_ids
 
 
 # ── Orders ────────────────────────────────────────────────────────────────────
 
-def _format_order(row):
+def _format_order(row, conn=None):
+    """OrderDetailsDomain shape. Snake_case columns stay alongside the camelCase keys."""
     obj_type = row.pop("objective_type", None)
     obj_value = row.pop("objective_value", None)
     obj_currency = row.pop("objective_currency", None)
     obj_unlimited = row.pop("objective_unlimited", None)
+    obj_managed = row.pop("managed_objective", None)
     row["objective"] = {
         "type": obj_type, "value": obj_value,
-        "currency": obj_currency, "unlimited": obj_unlimited or False,
+        "currency": obj_currency, "unlimited": bool(obj_unlimited),
+        "managedObjective": bool(obj_managed),
     }
+    row["archived"] = bool(row.get("archived"))
+    row["advertiserId"] = row.get("advertiser_id")
+    row["startDate"] = row.get("start_date")
+    row["endDate"] = row.get("end_date")
+    row["externalReference"] = row.get("external_reference")
+    row["dealId"] = row.get("deal_id")
+    if conn is not None:
+        row["cappingRules"] = _load_capping(conn, "order", row["id"])
     return row
+
+
+def _get_order_row(conn, order_id):
+    row = _one(conn, "SELECT * FROM aw_orders WHERE id = %s", (order_id,))
+    if not row:
+        _404("Order", order_id)
+    return row
+
+
+def _validate_order_body(body):
+    _require(body, "name", "startDate")
+    obj = _object(body, "objective")
+    _enum("objective.type", obj.get("type"), OBJECTIVE_TYPES)
+    _validate_capping(body.get("cappingRules"))
+    _check_dates(body)
 
 
 @router.get("/orders")
 def list_orders(limit: int = Query(100, ge=1, le=1000),
                 page: int = Query(1, ge=1),
                 advertiser_id: Optional[int] = Query(None, alias="advertiserId"),
+                modified_after: Optional[str] = Query(
+                    None, alias="modifiedAfter",
+                    description="yyyy-MM-dd'T'HH:mm:ssZ; orders created or changed on/after this time"),
                 conn=Depends(get_db)):
     sql = "SELECT * FROM aw_orders WHERE 1=1"
     params: list = []
     if advertiser_id:
         sql += " AND advertiser_id = %s"
         params.append(advertiser_id)
+    if modified_after:
+        since = _parse_dt(modified_after)
+        if not since:
+            _400("modifiedAfter", "modifiedAfter must be a date-time (yyyy-MM-dd'T'HH:mm:ssZ)")
+        sql += " AND updated_at >= %s"
+        params.append(since.astimezone(timezone.utc).strftime(TS_FMT))
     rows = _paginate(conn, sql, tuple(params), limit, page)
-    return [_format_order(r) for r in rows]
+    return [_format_order(r, conn) for r in rows]
 
 
 @router.post("/orders", status_code=201)
-def create_order(body: dict = Body(...), conn=Depends(get_db)):
-    obj = body.get("objective", {})
+def create_order(body: dict = Body(..., openapi_examples=_EX_ORDER), conn=Depends(get_db)):
+    _require(body, "advertiserId")
+    _validate_order_body(body)
+    if not _exists(conn, "aw_advertisers", body["advertiserId"]):
+        _404("Advertiser", body["advertiserId"])
+    obj = _object(body, "objective")
+    now = _ts()
     cur = conn.cursor()
     cur.execute(
         """INSERT INTO aw_orders
            (name, advertiser_id, start_date, end_date,
             objective_type, objective_value, objective_currency, objective_unlimited,
-            comments, external_reference, deal_id, archived, created_at)
-           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,false,NOW()) RETURNING *""",
+            managed_objective, comments, external_reference, deal_id, archived,
+            created_at, updated_at)
+           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,false,%s,%s) RETURNING *""",
         (body["name"], body["advertiserId"], body["startDate"], body.get("endDate"),
          obj.get("type", "IMPRESSIONS"), obj.get("value"), obj.get("currency", "USD"),
-         obj.get("unlimited", False),
+         obj.get("unlimited", False), bool(obj.get("managedObjective", False)),
          body.get("comments"), body.get("externalReference"),
-         body.get("dealId")),
+         body.get("dealId"), now, now),
     )
+    row = dict(cur.fetchone())
+    _save_capping(conn, "order", row["id"], body.get("cappingRules"))
     conn.commit()
-    return _format_order(dict(cur.fetchone()))
+    return _format_order(row, conn)
 
 
 @router.get("/orders/{order_id}")
 def get_order(order_id: int, conn=Depends(get_db)):
-    row = _one(conn, "SELECT * FROM aw_orders WHERE id = %s", (order_id,))
-    if not row:
-        _404("Order", order_id)
-    return _format_order(row)
+    return _format_order(_get_order_row(conn, order_id), conn)
 
 
 @router.put("/orders/{order_id}")
-def update_order(order_id: int, body: dict = Body(...), conn=Depends(get_db)):
-    existing = _one(conn, "SELECT * FROM aw_orders WHERE id = %s", (order_id,))
-    if not existing:
-        _404("Order", order_id)
-    obj = body.get("objective", {})
+def update_order(order_id: int, body: dict = Body(..., openapi_examples=_EX_ORDER),
+                 conn=Depends(get_db)):
+    _validate_order_body(body)
+    _get_order_row(conn, order_id)
+    obj = _object(body, "objective")
     _q(conn,
         """UPDATE aw_orders SET name=%s, start_date=%s, end_date=%s,
            objective_type=%s, objective_value=%s, objective_currency=%s,
-           objective_unlimited=%s, comments=%s, external_reference=%s,
-           deal_id=%s WHERE id=%s""",
+           objective_unlimited=%s, managed_objective=%s, comments=%s,
+           external_reference=%s, deal_id=%s, updated_at=%s WHERE id=%s""",
         (body["name"], body["startDate"], body.get("endDate"),
          obj.get("type"), obj.get("value"), obj.get("currency"),
-         obj.get("unlimited", False),
+         obj.get("unlimited", False), bool(obj.get("managedObjective", False)),
          body.get("comments"), body.get("externalReference"),
-         body.get("dealId"), order_id))
+         body.get("dealId"), _ts(), order_id))
+    _save_capping(conn, "order", order_id, body.get("cappingRules"))
     conn.commit()
-    return _format_order(dict(_one(conn, "SELECT * FROM aw_orders WHERE id = %s", (order_id,))))
+    return _format_order(_get_order_row(conn, order_id), conn)
 
 
 @router.put("/orders/{order_id}/archive")
 def archive_order(order_id: int, conn=Depends(get_db)):
-    row = _one(conn, "SELECT * FROM aw_orders WHERE id = %s", (order_id,))
-    if not row:
-        _404("Order", order_id)
-    _q(conn, "UPDATE aw_orders SET archived = true WHERE id = %s", (order_id,))
+    _get_order_row(conn, order_id)
+    _q(conn, "UPDATE aw_orders SET archived = true, updated_at = %s WHERE id = %s",
+       (_ts(), order_id))
     conn.commit()
     return None
 
 
 @router.put("/orders/{order_id}/unarchive")
 def unarchive_order(order_id: int, conn=Depends(get_db)):
-    row = _one(conn, "SELECT * FROM aw_orders WHERE id = %s", (order_id,))
-    if not row:
-        _404("Order", order_id)
-    _q(conn, "UPDATE aw_orders SET archived = false WHERE id = %s", (order_id,))
+    _get_order_row(conn, order_id)
+    _q(conn, "UPDATE aw_orders SET archived = false, updated_at = %s WHERE id = %s",
+       (_ts(), order_id))
     conn.commit()
     return None
 
@@ -631,7 +1089,7 @@ def list_order_campaigns(order_id: int,
         sql += f" AND status IN ({placeholders})"
         params.extend(statuses)
     rows = _paginate(conn, sql, tuple(params), limit, page)
-    return [_format_campaign(r) for r in rows]
+    return [_format_campaign(r, conn) for r in rows]
 
 
 # ── Publishers ────────────────────────────────────────────────────────────────
@@ -855,8 +1313,27 @@ def upload_creative(conn=Depends(get_db)):
 # ── Targeting Zones (read-only) ──────────────────────────────────────────────
 
 @router.get("/targeting-zones")
-def list_targeting_zones(conn=Depends(get_db)):
-    rows = _q(conn, "SELECT id, name, description FROM aw_zones ORDER BY id LIMIT 100").fetchall()
+def list_targeting_zones(zone_group_ids: Optional[str] = Query(None, alias="zoneGroupIds"),
+                         creative_type: Optional[str] = Query(None, alias="creativeType"),
+                         conn=Depends(get_db)):
+    """Zones available for targeting, optionally narrowed to zone groups / creative type."""
+    sql = "SELECT id, name, description FROM aw_zones WHERE 1=1"
+    params: list = []
+    if zone_group_ids:
+        try:
+            group_ids = [int(x) for x in zone_group_ids.split(",") if x.strip()]
+        except ValueError:
+            _400("zoneGroupIds", "zoneGroupIds must be a comma-separated list of integers")
+        if group_ids:
+            placeholders = ",".join(["%s"] * len(group_ids))
+            sql += (" AND id IN (SELECT zone_id FROM aw_zone_group_zones"
+                    f" WHERE zone_group_id IN ({placeholders}))")
+            params.extend(group_ids)
+    zone_type = CREATIVE_TYPE_ZONE.get(creative_type or "")
+    if zone_type:
+        sql += " AND type = %s"
+        params.append(zone_type)
+    rows = _q(conn, sql + " ORDER BY id LIMIT 100", tuple(params)).fetchall()
     return [dict(r) for r in rows]
 
 
