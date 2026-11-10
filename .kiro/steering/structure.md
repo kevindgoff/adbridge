@@ -52,12 +52,12 @@ Each ad platform gets its own file in `app/routes/`. The router is conditionally
 ### Response envelope
 - List endpoints return `{"metadata": {...}, "data": [...]}`  via `list_response()`
 - Single-item endpoints return `{"data": {...}}` via `single_response()`
-- Hivestack uses OData-style `{"value": [...]}` with `$top/$skip/$count` via `_odata()` helper
+- Hivestack returns bare JSON arrays (live-API shape) with `x-page-offset` / `x-page-size` / `x-total-count` headers via `_list()`. Its contract is `app/specs/hivestack.openapi.json`, which `main.py` serves as the `/hivestack` part of `/openapi.json`
 
 ### Pagination
 - Basis WODH/DV360/Triton/AdsWizz use cursor-based pagination (`paginate()` in `helpers.py`)
 - Basis UIL uses page-based pagination (page/pageSize) with its own `_paginated_query()` helper
-- Hivestack uses offset-based OData pagination (`_odata()` in `hivestack.py`)
+- Hivestack uses offset-based `$top/$skip/$count` pagination (`_list()` in `hivestack.py`). Inventory lists (networks, sites, units, unitpacks, demographics) have no default `$top`
 
 ### Route-level helpers
 Each route file defines a local `_q(conn, sql, params)` or similar helper to execute queries via cursor. This avoids calling `conn.execute()` directly (psycopg2 connections don't support it).

@@ -93,6 +93,23 @@ if _enabled.get("freewheel"):
     app.include_router(freewheel_router, tags=["/freewheel"])
 
 
+_generated_openapi = app.openapi
+
+
+def _openapi():
+    """Generated schema, with /hivestack replaced by app/specs/hivestack.openapi.json."""
+    if app.openapi_schema:
+        return app.openapi_schema
+    schema = _generated_openapi()
+    if _enabled.get("hivestack"):
+        from app.routes.hivestack import apply_openapi_spec
+        apply_openapi_spec(schema)
+    return schema
+
+
+app.openapi = _openapi
+
+
 @app.on_event("startup")
 def startup():
     import time

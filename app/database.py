@@ -586,6 +586,7 @@ CREATE TABLE IF NOT EXISTS stats (
 );
 
 -- ==================== Hivestack (OpenRTB 2.5 DOOH) Tables ====================
+-- RTB / tracking tables (shape owned by the mock, not covered by the v2 spec)
 
 CREATE TABLE IF NOT EXISTS hs_publishers (
     id TEXT PRIMARY KEY,
@@ -651,229 +652,6 @@ CREATE TABLE IF NOT EXISTS hs_impressions (
     recorded_at TEXT NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS hs_accounts (
-    id TEXT PRIMARY KEY,
-    name TEXT NOT NULL,
-    type TEXT NOT NULL DEFAULT 'buyer',
-    status TEXT NOT NULL DEFAULT 'active',
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS hs_advertisers (
-    id TEXT PRIMARY KEY,
-    name TEXT NOT NULL,
-    account_id TEXT REFERENCES hs_accounts(id),
-    status TEXT NOT NULL DEFAULT 'active',
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS hs_campaigns (
-    id TEXT PRIMARY KEY,
-    name TEXT NOT NULL,
-    advertiser_id TEXT REFERENCES hs_advertisers(id),
-    status TEXT NOT NULL DEFAULT 'draft',
-    start_date TEXT,
-    end_date TEXT,
-    budget REAL DEFAULT 0,
-    currency TEXT DEFAULT 'USD',
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS hs_lineitems (
-    id TEXT PRIMARY KEY,
-    name TEXT NOT NULL,
-    campaign_id TEXT REFERENCES hs_campaigns(id),
-    status TEXT NOT NULL DEFAULT 'draft',
-    start_date TEXT,
-    end_date TEXT,
-    budget REAL DEFAULT 0,
-    cpm REAL DEFAULT 1.0,
-    impressions_goal INTEGER DEFAULT 0,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS hs_lineitem_targeting (
-    id TEXT PRIMARY KEY,
-    lineitem_id TEXT NOT NULL REFERENCES hs_lineitems(id),
-    targeting_type TEXT NOT NULL,
-    targeting_value TEXT,
-    created_at TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS hs_lineitem_units (
-    lineitem_id TEXT NOT NULL REFERENCES hs_lineitems(id),
-    unit_id TEXT NOT NULL,
-    PRIMARY KEY (lineitem_id, unit_id)
-);
-
-CREATE TABLE IF NOT EXISTS hs_creatives (
-    id TEXT PRIMARY KEY,
-    name TEXT NOT NULL,
-    advertiser_id TEXT,
-    type TEXT NOT NULL DEFAULT 'video',
-    status TEXT NOT NULL DEFAULT 'draft',
-    width INTEGER DEFAULT 1920,
-    height INTEGER DEFAULT 1080,
-    file_url TEXT,
-    approval_status TEXT DEFAULT 'pending_review',
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS hs_creative_approvals (
-    id TEXT PRIMARY KEY,
-    creative_id TEXT NOT NULL REFERENCES hs_creatives(id),
-    media_owner_id TEXT,
-    approval_status TEXT NOT NULL DEFAULT 'pending',
-    notes TEXT,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS hs_creative_units (
-    creative_id TEXT NOT NULL REFERENCES hs_creatives(id),
-    unit_id TEXT NOT NULL,
-    PRIMARY KEY (creative_id, unit_id)
-);
-
-CREATE TABLE IF NOT EXISTS hs_lineitem_creatives (
-    id TEXT PRIMARY KEY,
-    lineitem_id TEXT NOT NULL,
-    creative_id TEXT NOT NULL,
-    created_at TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS hs_lineitem_deal_creatives (
-    id TEXT PRIMARY KEY,
-    lineitem_id TEXT NOT NULL,
-    deal_id TEXT NOT NULL,
-    creative_id TEXT NOT NULL,
-    created_at TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS hs_networks (
-    id TEXT PRIMARY KEY,
-    name TEXT NOT NULL,
-    description TEXT,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS hs_sites (
-    id TEXT PRIMARY KEY,
-    name TEXT NOT NULL,
-    network_id TEXT REFERENCES hs_networks(id),
-    external_id TEXT UNIQUE,
-    address TEXT,
-    city TEXT,
-    country TEXT DEFAULT 'USA',
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS hs_units (
-    id TEXT PRIMARY KEY,
-    name TEXT NOT NULL,
-    site_id TEXT REFERENCES hs_sites(id),
-    external_id TEXT UNIQUE,
-    width INTEGER DEFAULT 1920,
-    height INTEGER DEFAULT 1080,
-    venue_type_id INTEGER,
-    unitpack_id TEXT,
-    status TEXT NOT NULL DEFAULT 'active',
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS hs_unitpacks (
-    id TEXT PRIMARY KEY,
-    name TEXT NOT NULL,
-    description TEXT,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS hs_unitpack_targeting (
-    id TEXT PRIMARY KEY,
-    unitpack_id TEXT NOT NULL REFERENCES hs_unitpacks(id),
-    targeting_type TEXT,
-    targeting_value TEXT,
-    created_at TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS hs_demographics (
-    id TEXT PRIMARY KEY,
-    name TEXT NOT NULL,
-    code TEXT NOT NULL,
-    description TEXT,
-    created_at TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS hs_languages (
-    id TEXT PRIMARY KEY,
-    name TEXT NOT NULL,
-    code TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS hs_locations (
-    id TEXT PRIMARY KEY,
-    name TEXT NOT NULL,
-    country TEXT,
-    region TEXT,
-    city TEXT
-);
-
-CREATE TABLE IF NOT EXISTS hs_mediatypes (
-    id TEXT PRIMARY KEY,
-    name TEXT NOT NULL,
-    description TEXT
-);
-
-CREATE TABLE IF NOT EXISTS hs_unit_languages (
-    id TEXT PRIMARY KEY,
-    unit_id TEXT NOT NULL,
-    language_id TEXT NOT NULL REFERENCES hs_languages(id),
-    created_at TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS hs_unit_properties (
-    id TEXT PRIMARY KEY,
-    unit_id TEXT NOT NULL,
-    key TEXT NOT NULL,
-    value TEXT,
-    created_at TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS hs_concentrations (
-    unit_id TEXT NOT NULL,
-    day_of_week INTEGER NOT NULL,
-    hour INTEGER NOT NULL,
-    audience_count REAL DEFAULT 0,
-    updated_at TEXT NOT NULL,
-    PRIMARY KEY (unit_id, day_of_week, hour)
-);
-
-CREATE TABLE IF NOT EXISTS hs_report_definitions (
-    id TEXT PRIMARY KEY,
-    name TEXT NOT NULL,
-    description TEXT,
-    query_config TEXT,
-    created_at TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS hs_report_executions (
-    id TEXT PRIMARY KEY,
-    definition_id TEXT REFERENCES hs_report_definitions(id),
-    status TEXT NOT NULL DEFAULT 'pending',
-    download_url TEXT,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
-);
-
 CREATE TABLE IF NOT EXISTS hs_custom_events (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
@@ -891,6 +669,345 @@ CREATE TABLE IF NOT EXISTS hs_event_data (
     status TEXT NOT NULL DEFAULT 'active',
     updated_at TEXT NOT NULL,
     UNIQUE (event_id, entity_type, entity_id)
+);
+
+-- Hivestack API v2 resources — mirror app/specs/hivestack.openapi.json.
+-- Column names equal the live API field names so real GET /api/v2/* records
+-- can be inserted as-is. Integer primary keys are the live <resource>_id.
+-- Nested objects/arrays, and fields whose type the live sample could not
+-- determine (always null), are stored as JSON text. No foreign keys, so a
+-- partial import of live data never fails on a missing parent.
+
+CREATE TABLE IF NOT EXISTS hs_accounts (
+    account_id INTEGER PRIMARY KEY,
+    external_id TEXT,
+    logo_url TEXT,
+    name TEXT NOT NULL,
+    organization_id INTEGER
+);
+
+CREATE TABLE IF NOT EXISTS hs_advertisers (
+    advertiser_id INTEGER PRIMARY KEY,
+    created_on_utc TEXT,
+    external_id TEXT,
+    modified_on_utc TEXT,
+    name TEXT NOT NULL,
+    organization_id INTEGER,
+    unique_advertiser TEXT
+);
+
+CREATE TABLE IF NOT EXISTS hs_campaigns (
+    campaign_id INTEGER PRIMARY KEY,
+    account_id INTEGER,
+    advertiser_id INTEGER,
+    budget DOUBLE PRECISION,
+    budget_cap DOUBLE PRECISION,
+    campaign_properties TEXT,
+    campaign_type TEXT,
+    cap TEXT,
+    created_on_utc TEXT,
+    end_date TEXT,
+    min_seconds_between_plays INTEGER,
+    modified_on_utc TEXT,
+    name TEXT NOT NULL,
+    notes TEXT,
+    organization_id INTEGER,
+    pacing_budget TEXT,
+    pacing_budget_mode TEXT,
+    pacing_strategy TEXT,
+    priority TEXT,
+    start_date TEXT
+);
+
+CREATE TABLE IF NOT EXISTS hs_lineitems (
+    lineitem_id INTEGER PRIMARY KEY,
+    ad_duration INTEGER,
+    budget DOUBLE PRECISION,
+    budget_mode TEXT,
+    cadence DOUBLE PRECISION,
+    cadence_smooth_catchup BOOLEAN,
+    campaign_id INTEGER,
+    cancelled_at TEXT,
+    cap DOUBLE PRECISION,
+    cpp TEXT,
+    created_at TEXT,
+    created_by TEXT,
+    created_on_utc TEXT,
+    creative_ids TEXT,
+    daypart TEXT,
+    delivery_curve TEXT,
+    demographic_ids TEXT,
+    external_id TEXT,
+    flight_from TEXT,
+    flight_to TEXT,
+    is_cpm_from_rate_card BOOLEAN,
+    lineitem_properties TEXT,
+    market_targeted_impressions INTEGER,
+    max_bid_cpm TEXT,
+    mediaowner_ids TEXT,
+    min_concentration_factor DOUBLE PRECISION,
+    min_seconds_between_plays INTEGER,
+    modified_on_utc TEXT,
+    name TEXT NOT NULL,
+    notes TEXT,
+    package_id INTEGER,
+    priority INTEGER,
+    purchase_type TEXT,
+    run_state TEXT,
+    state TEXT,
+    submitted_at TEXT,
+    unit_ids TEXT,
+    cpm_net TEXT,
+    deal_id TEXT
+);
+
+CREATE TABLE IF NOT EXISTS hs_creatives (
+    creative_id INTEGER PRIMARY KEY,
+    advertiser_id INTEGER,
+    created_at TEXT,
+    creative_files TEXT,
+    daypart TEXT,
+    iab_categories TEXT,
+    inventory_targeting TEXT,
+    language_ids TEXT,
+    name TEXT NOT NULL,
+    organization_id INTEGER,
+    retired_at TEXT,
+    run_state TEXT,
+    state TEXT,
+    submitted_at TEXT,
+    uuid TEXT,
+    last_played_time_utc TEXT
+);
+
+CREATE TABLE IF NOT EXISTS hs_creative_approvals (
+    id TEXT PRIMARY KEY,
+    creative_id INTEGER NOT NULL,
+    media_owner_id TEXT,
+    approval_status TEXT NOT NULL DEFAULT 'pending',
+    notes TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS hs_lineitem_creatives (
+    lineitemcreative_id INTEGER PRIMARY KEY,
+    lineitem_id INTEGER NOT NULL,
+    creative_id INTEGER NOT NULL,
+    local_from_date TEXT,
+    local_to_date TEXT,
+    weight INTEGER
+);
+
+CREATE TABLE IF NOT EXISTS hs_lineitem_deal_creatives (
+    lineitem_id INTEGER NOT NULL,
+    creative_id INTEGER NOT NULL,
+    deal_id TEXT NOT NULL,
+    deal_flight_from TEXT,
+    deal_flight_to TEXT,
+    local_from_date TEXT,
+    local_to_date TEXT,
+    PRIMARY KEY (lineitem_id, creative_id, deal_id)
+);
+
+CREATE TABLE IF NOT EXISTS hs_networks (
+    network_id INTEGER PRIMARY KEY,
+    code TEXT,
+    created_on_utc TEXT,
+    loop_length TEXT,
+    modified_on_utc TEXT,
+    name TEXT NOT NULL,
+    owner_id INTEGER,
+    spot_length TEXT
+);
+
+CREATE TABLE IF NOT EXISTS hs_sites (
+    site_id INTEGER PRIMARY KEY,
+    active BOOLEAN,
+    created_on_utc TEXT,
+    description TEXT,
+    external_id TEXT,
+    latitude DOUBLE PRECISION,
+    location_id INTEGER,
+    longitude DOUBLE PRECISION,
+    modified_on_utc TEXT,
+    name TEXT NOT NULL,
+    owner_id INTEGER,
+    uuid TEXT
+);
+
+CREATE TABLE IF NOT EXISTS hs_units (
+    unit_id INTEGER PRIMARY KEY,
+    active BOOLEAN,
+    allow_audio BOOLEAN,
+    allow_flash BOOLEAN,
+    allow_html BOOLEAN,
+    allow_image BOOLEAN,
+    allow_video BOOLEAN,
+    allow_zip BOOLEAN,
+    available_for_adserver BOOLEAN,
+    available_for_deals BOOLEAN,
+    available_for_open_exchange BOOLEAN,
+    available_for_storefront BOOLEAN,
+    blacklist_unique_advertiser_ids TEXT,
+    created_on_utc TEXT,
+    description TEXT,
+    enable_strict_iab_blacklisting BOOLEAN,
+    enable_strict_iab_frequency_capping BOOLEAN,
+    external_id TEXT,
+    facing_direction TEXT,
+    floor_cpm DOUBLE PRECISION,
+    image_uri TEXT,
+    impression_verifier_vendor TEXT,
+    impression_verifier_vendor_external_id TEXT,
+    latitude DOUBLE PRECISION,
+    location TEXT,
+    location_id INTEGER,
+    longitude DOUBLE PRECISION,
+    loop_length INTEGER,
+    max_spot_length INTEGER,
+    media_type TEXT,
+    mediatype_id INTEGER,
+    mediatype_name TEXT,
+    min_seconds_between_ad_domain_plays INTEGER,
+    min_seconds_between_creative_category_plays INTEGER,
+    min_seconds_between_iab_category_plays INTEGER,
+    min_spot_length INTEGER,
+    modified_on_utc TEXT,
+    name TEXT NOT NULL,
+    network_id INTEGER,
+    operating_hours TEXT,
+    owner_id INTEGER,
+    physical_screen_height_cm INTEGER,
+    physical_screen_width_cm INTEGER,
+    physical_unit_count TEXT,
+    screen_height INTEGER,
+    screen_width INTEGER,
+    site_id INTEGER,
+    spot_length INTEGER,
+    timezone TEXT,
+    uuid TEXT,
+    weekly_impressions INTEGER,
+    weekly_traffic INTEGER,
+    last_heard_from_seconds_ago DOUBLE PRECISION,
+    last_heard_from_utc TEXT,
+    last_played_on_seconds_ago DOUBLE PRECISION,
+    last_played_on_utc TEXT,
+    has_audience_data BOOLEAN
+);
+
+CREATE TABLE IF NOT EXISTS hs_unitpacks (
+    unitpack_id INTEGER PRIMARY KEY,
+    active BOOLEAN,
+    created_on_utc TEXT,
+    description TEXT,
+    external_id TEXT,
+    modified_on_utc TEXT,
+    name TEXT NOT NULL,
+    owner_id INTEGER,
+    prepopulation_option TEXT
+);
+
+CREATE TABLE IF NOT EXISTS hs_unitpack_units (
+    unitpack_id INTEGER NOT NULL,
+    unit_id INTEGER NOT NULL,
+    PRIMARY KEY (unitpack_id, unit_id)
+);
+
+CREATE TABLE IF NOT EXISTS hs_unitpack_targeting (
+    id TEXT PRIMARY KEY,
+    unitpack_id INTEGER NOT NULL,
+    targeting_type TEXT,
+    targeting_value TEXT,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS hs_demographics (
+    demographic_id INTEGER PRIMARY KEY,
+    code TEXT,
+    created_on_utc TEXT,
+    modified_on_utc TEXT,
+    name TEXT NOT NULL,
+    organization_id TEXT,
+    show_buyers BOOLEAN,
+    type TEXT
+);
+
+CREATE TABLE IF NOT EXISTS hs_languages (
+    language_id INTEGER PRIMARY KEY,
+    code TEXT,
+    name TEXT NOT NULL
+);
+
+-- hierarchy / archived / version are not in GET /locations. They feed the
+-- location object embedded in units.
+CREATE TABLE IF NOT EXISTS hs_locations (
+    location_id INTEGER PRIMARY KEY,
+    code TEXT,
+    country_id INTEGER,
+    latitude TEXT,
+    level INTEGER,
+    longitude TEXT,
+    name TEXT NOT NULL,
+    region_id INTEGER,
+    hierarchy TEXT,
+    archived BOOLEAN,
+    version TEXT
+);
+
+CREATE TABLE IF NOT EXISTS hs_mediatypes (
+    mediatype_id INTEGER PRIMARY KEY,
+    archived BOOLEAN,
+    code TEXT,
+    enumeration_id INTEGER,
+    name TEXT NOT NULL,
+    parent_mediatype_id INTEGER
+);
+
+CREATE TABLE IF NOT EXISTS hs_unit_languages (
+    unitlanguage_id INTEGER PRIMARY KEY,
+    created_on_utc TEXT,
+    language_id INTEGER,
+    modified_on_utc TEXT,
+    unit_id INTEGER
+);
+
+CREATE TABLE IF NOT EXISTS hs_unit_properties (
+    unitproperty_id INTEGER PRIMARY KEY,
+    created_on_utc TEXT,
+    modified_on_utc TEXT,
+    name TEXT,
+    unit_id INTEGER,
+    value TEXT
+);
+
+CREATE TABLE IF NOT EXISTS hs_concentrations (
+    unit_id INTEGER NOT NULL,
+    day_of_week INTEGER NOT NULL,
+    hour INTEGER NOT NULL,
+    audience_count REAL DEFAULT 0,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (unit_id, day_of_week, hour)
+);
+
+CREATE TABLE IF NOT EXISTS hs_report_definitions (
+    report_definition_id INTEGER PRIMARY KEY,
+    definition_json TEXT,
+    exchange_id TEXT,
+    last_executed_on_utc TEXT,
+    name TEXT NOT NULL,
+    organization_id INTEGER
+);
+
+CREATE TABLE IF NOT EXISTS hs_report_executions (
+    report_execution_id INTEGER PRIMARY KEY,
+    execution_finished_time_utc TEXT,
+    execution_started_time_utc TEXT,
+    progress DOUBLE PRECISION,
+    report_definition_id INTEGER,
+    report_file_url TEXT,
+    status_code TEXT,
+    status_message TEXT
 );
 
 -- ==================== AdsWizz Domain API v9 Tables ====================
@@ -2781,8 +2898,103 @@ def _seed_triton(cur, now):
                 )
 
 
+HS_ORGANIZATION_ID = 5021  # the buyer organization every seeded Hivestack record belongs to
+
+# Tables whose shape changed with the Hivestack v2 spec (app/specs/hivestack.openapi.json),
+# plus tables the v2 shape replaced. Children first so SQLite FK checks never trip.
+_HS_V2_TABLES = [
+    "hs_creative_approvals", "hs_creative_units", "hs_lineitem_creatives",
+    "hs_lineitem_deal_creatives", "hs_lineitem_targeting", "hs_lineitem_units",
+    "hs_lineitems", "hs_campaigns", "hs_creatives", "hs_advertisers", "hs_accounts",
+    "hs_unit_languages", "hs_unit_properties", "hs_unitpack_targeting", "hs_unitpack_units",
+    "hs_concentrations", "hs_units", "hs_sites", "hs_networks", "hs_unitpacks",
+    "hs_demographics", "hs_languages", "hs_locations", "hs_mediatypes",
+    "hs_report_executions", "hs_report_definitions",
+]
+
+
+def _migrate_hivestack_v2(conn):
+    """Drop Hivestack tables still in the pre-v2 shape (TEXT uuid `id` keys).
+
+    CREATE TABLE IF NOT EXISTS never alters an existing table, and the v2
+    shape changes every primary key, so the old tables are dropped and the
+    schema step recreates them. Only seeded mock rows live there; they are
+    re-seeded by _seed_hivestack. Runs before init_db_schema. No-op on a
+    fresh database or one already on v2.
+    """
+    from app.db_backend import BACKEND
+
+    cur = conn.cursor()
+    if BACKEND == "sqlite":
+        cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='hs_accounts'")
+        if not cur.fetchall():
+            return
+        cur.execute("PRAGMA table_info(hs_accounts)")
+        columns = {r["name"] for r in cur.fetchall()}
+    else:
+        cur.execute(
+            "SELECT column_name FROM information_schema.columns WHERE table_name = %s",
+            ("hs_accounts",),
+        )
+        columns = {r["column_name"] for r in cur.fetchall()}
+        if not columns:
+            return
+    if "account_id" in columns:
+        return
+
+    suffix = "" if BACKEND == "sqlite" else " CASCADE"
+    for table in _HS_V2_TABLES:
+        cur.execute(f"DROP TABLE IF EXISTS {table}{suffix}")
+    conn.commit()
+    print("Hivestack: dropped pre-v2 tables; they will be recreated and re-seeded.")
+
+
+def _hs_ts(days_ago=0.0):
+    """Hivestack-style timestamp: ISO 8601, milliseconds, no UTC offset."""
+    return (datetime.utcnow() - timedelta(days=days_ago)).isoformat(timespec="milliseconds")
+
+
+def _hs_insert(cur, table, record, json_fields=()):
+    """Insert a dict whose keys are column names. json_fields are JSON-encoded."""
+    cols = list(record)
+    vals = [
+        (None if record[c] is None else json.dumps(record[c])) if c in json_fields else record[c]
+        for c in cols
+    ]
+    cur.execute(
+        f"INSERT INTO {table} ({', '.join(cols)}) VALUES ({', '.join(['%s'] * len(cols))})",
+        vals,
+    )
+
+
+def _hs_empty_inventory_targeting(targeting_id):
+    """Creative inventory_targeting object with every key the live API returns."""
+    t = {k: [] for k in (
+        "creative_format_exclusions", "creative_formats", "creative_orientation_exclusions",
+        "creative_orientations", "geofencegroup_exclusion_ids", "geofencegroup_ids",
+        "iab_categories", "iab_category_exclusions", "language_exclusion_ids", "language_ids",
+        "location_exclusion_ids", "location_ids", "market_exclusion_ids", "market_ids",
+        "mediatype_exclusion_ids", "mediatype_ids", "network_exclusion_ids", "network_ids",
+        "owner_ids", "site_exclusion_ids", "site_ids", "unit_exclusion_ids", "unit_ids",
+        "unit_tag_exclusions", "unit_tags", "unitpack_exclusion_ids", "unitpack_ids",
+    )}
+    t.update({"co2e_emissions_score_threshold": None, "complex_targeting": None,
+              "inventorytargeting_id": targeting_id})
+    return {k: t[k] for k in sorted(t)}
+
+
 def _seed_hivestack(cur, now):
-    """Seed Hivestack DOOH mock data: publishers, screens, and deals."""
+    """Seed Hivestack DOOH mock data.
+
+    Two independent parts so a v2 migration (which drops only the v2 tables)
+    re-seeds the v2 resources without duplicating the RTB data.
+    """
+    _seed_hivestack_rtb(cur, now)
+    _seed_hivestack_v2(cur)
+
+
+def _seed_hivestack_rtb(cur, now):
+    """Publishers, OpenRTB screens, deals and custom events."""
     cur.execute("SELECT COUNT(*) FROM hs_publishers")
     if cur.fetchone()["count"] > 0:
         return
@@ -2861,211 +3073,367 @@ def _seed_hivestack(cur, now):
             (deal_id, pub_ids[pub_idx], name, bidfloor, cur_code, deal_type, must_bid, wseat, now),
         )
 
-    # Accounts
-    account_ids = []
-    for aname in ["Horizon Media Group", "Omnicom Media", "Publicis Groupe"]:
-        aid = str(uuid.uuid4())
-        account_ids.append(aid)
+    for ename in ["Super Bowl Weekend", "Black Friday", "Holiday Season"]:
         cur.execute(
-            "INSERT INTO hs_accounts (id, name, type, status, created_at, updated_at) VALUES (%s,%s,%s,%s,%s,%s)",
-            (aid, aname, "buyer", "active", now, now))
+            "INSERT INTO hs_custom_events (id, name, description, status, created_at, updated_at) "
+            "VALUES (%s,%s,%s,%s,%s,%s)",
+            (str(uuid.uuid4()), ename, f"Mock event: {ename}", "active", now, now))
 
-    # Advertisers
-    advertiser_ids = []
-    adv_data = [
-        ("Acme Corp DOOH", 0), ("TechNova Outdoor", 0),
-        ("GreenLeaf OOH", 1), ("Sunset Travel", 1), ("Amazon Ads", 2),
+
+def _seed_hivestack_v2(cur):
+    """Hivestack API v2 resources in the live-API shape (see app/specs/hivestack.openapi.json).
+
+    IDs, cross-references and value types are consistent across resources.
+    Enum-like strings (state, run_state, campaign_type, budget_mode, ...) are
+    plausible placeholders: the spec gives their type but not their values.
+    """
+    cur.execute("SELECT COUNT(*) FROM hs_accounts")
+    if cur.fetchone()["count"] > 0:
+        return
+
+    rng = random.Random(20261110)  # deterministic seed data
+    org = HS_ORGANIZATION_ID
+    always = "1" * 168  # daypart: one flag per hour of the week
+
+    # ── Reference data: locations, media types, languages, demographics ──────
+    # (location_id, code, name, level, country_id, region_id, lat, lon, hierarchy)
+    locations = [
+        (1, "US", "United States", 1, None, None, None, None, "United States"),
+        (2, "CA", "Canada", 1, None, None, None, None, "Canada"),
+        (101, "US-NY", "New York", 2, 1, None, None, None, "United States > New York"),
+        (102, "US-CA", "California", 2, 1, None, None, None, "United States > California"),
+        (103, "US-IL", "Illinois", 2, 1, None, None, None, "United States > Illinois"),
+        (104, "US-DC", "District of Columbia", 2, 1, None, None, None, "United States > District of Columbia"),
+        (201, "CA-ON", "Ontario", 2, 2, None, None, None, "Canada > Ontario"),
+        (202, "CA-QC", "Quebec", 2, 2, None, None, None, "Canada > Quebec"),
+        (10001, "US-NY-NYC", "New York City", 3, 1, 101, "40.7128", "-74.0060", "United States > New York > New York City"),
+        (10002, "US-CA-LAX", "Los Angeles", 3, 1, 102, "34.0522", "-118.2437", "United States > California > Los Angeles"),
+        (10003, "US-IL-CHI", "Chicago", 3, 1, 103, "41.8781", "-87.6298", "United States > Illinois > Chicago"),
+        (10004, "US-DC-WAS", "Washington", 3, 1, 104, "38.9072", "-77.0369", "United States > District of Columbia > Washington"),
+        (20001, "CA-ON-TOR", "Toronto", 3, 2, 201, "43.6532", "-79.3832", "Canada > Ontario > Toronto"),
+        (20002, "CA-ON-MIS", "Mississauga", 3, 2, 201, "43.5890", "-79.6441", "Canada > Ontario > Mississauga"),
+        (20003, "CA-QC-MTL", "Montreal", 3, 2, 202, "45.5017", "-73.5673", "Canada > Quebec > Montreal"),
     ]
-    for aname, acc_idx in adv_data:
-        aid = str(uuid.uuid4())
-        advertiser_ids.append(aid)
-        cur.execute(
-            "INSERT INTO hs_advertisers (id, name, account_id, status, created_at, updated_at) VALUES (%s,%s,%s,%s,%s,%s)",
-            (aid, aname, account_ids[acc_idx], "active", now, now))
+    loc_by_id = {}
+    for loc_id, code, name, level, country_id, region_id, lat, lon, hierarchy in locations:
+        row = {"location_id": loc_id, "code": code, "country_id": country_id, "latitude": lat,
+               "level": level, "longitude": lon, "name": name, "region_id": region_id,
+               "hierarchy": hierarchy, "archived": False, "version": "1"}
+        loc_by_id[loc_id] = row
+        _hs_insert(cur, "hs_locations", row)
 
-    # Campaigns
-    campaign_ids = []
-    for i, adv_id in enumerate(advertiser_ids):
+    # (mediatype_id, code, name, enumeration_id, parent_mediatype_id)
+    mediatypes = [
+        (1, "outdoor", "Outdoor", 1, None), (2, "transit", "Transit", 2, None),
+        (3, "retail", "Retail", 3, None), (4, "airports", "Airports", 4, None),
+        (101, "outdoor.billboards", "Billboards", 101, 1),
+        (102, "outdoor.street_furniture", "Street Furniture", 102, 1),
+        (201, "transit.subway", "Subway", 201, 2),
+        (202, "transit.train_stations", "Train Stations", 202, 2),
+        (301, "retail.malls", "Malls", 301, 3),
+        (401, "airports.terminals", "Terminals", 401, 4),
+    ]
+    mt_by_id = {}
+    for mt_id, code, name, enum_id, parent in mediatypes:
+        row = {"mediatype_id": mt_id, "archived": False, "code": code, "enumeration_id": enum_id,
+               "name": name, "parent_mediatype_id": parent}
+        mt_by_id[mt_id] = row
+        _hs_insert(cur, "hs_mediatypes", row)
+
+    for lang_id, code, name in [(1, "en", "English"), (2, "fr", "French"), (3, "es", "Spanish"),
+                                (4, "zh", "Chinese"), (5, "de", "German"), (6, "ja", "Japanese")]:
+        _hs_insert(cur, "hs_languages", {"language_id": lang_id, "code": code, "name": name})
+
+    demographics = [
+        (801, "GNDR-M|AGE-18-34", "Male 18-34", "age_gender"),
+        (802, "GNDR-F|AGE-18-34", "Female 18-34", "age_gender"),
+        (803, "AGE-25-54", "Adults 25-54", "age"),
+        (804, "HHI-100K-*", "High Income", "income"),
+        (805, "AGE-18-24", "Young Adults", "age"),
+        (806, "AGE-65-*", "Seniors 65+", "age"),
+    ]
+    for demo_id, code, name, dtype in demographics:
+        ts = _hs_ts(rng.uniform(200, 400))
+        _hs_insert(cur, "hs_demographics", {
+            "demographic_id": demo_id, "code": code, "created_on_utc": ts, "modified_on_utc": ts,
+            "name": name, "organization_id": None, "show_buyers": True, "type": dtype,
+        }, json_fields={"organization_id"})
+
+    # ── Inventory: networks, sites, units, unit packs ─────────────────────────
+    owners = [701, 702, 703, 704, 705]  # media-owner IDs (one per hs_publishers row, same order)
+    networks = [
+        (2201, "DDN", "Downtown Digital Network", 701), (2202, "TMN", "Transit Media Network", 702),
+        (2203, "MALL", "Mall Network", 703), (2204, "AIR", "Airport Network", 704),
+    ]
+    for net_id, code, name, owner in networks:
+        ts = _hs_ts(rng.uniform(300, 600))
+        _hs_insert(cur, "hs_networks", {
+            "network_id": net_id, "code": code, "created_on_utc": ts, "loop_length": None,
+            "modified_on_utc": ts, "name": name, "owner_id": owner, "spot_length": None,
+        }, json_fields={"loop_length", "spot_length"})
+
+    # (site_id, name, owner, location_id, lat, lon, network_id, mediatype_id, timezone)
+    sites = [
+        (9101, "Times Square Hub", 701, 10001, 40.7580, -73.9855, 2201, 101, "America/New_York"),
+        (9102, "Union Station", 702, 10004, 38.8973, -77.0063, 2202, 202, "America/New_York"),
+        (9103, "Eaton Centre", 703, 20001, 43.6544, -79.3807, 2203, 301, "America/Toronto"),
+        (9104, "Pearson Airport T1", 704, 20002, 43.6777, -79.6248, 2204, 401, "America/Toronto"),
+        (9105, "LAX Terminal 4", 704, 10002, 33.9425, -118.4081, 2204, 401, "America/Los_Angeles"),
+    ]
+    units = []  # (unit_id, owner_id)
+    for s_idx, (site_id, sname, owner, loc_id, lat, lon, net_id, mt_id, tz) in enumerate(sites):
+        ts = _hs_ts(rng.uniform(200, 500))
+        _hs_insert(cur, "hs_sites", {
+            "site_id": site_id, "active": True, "created_on_utc": ts, "description": f"{sname} DOOH venue",
+            "external_id": f"EXT-{sname[:4].upper()}", "latitude": lat, "location_id": loc_id,
+            "longitude": lon, "modified_on_utc": ts, "name": sname, "owner_id": owner,
+            "uuid": str(uuid.UUID(int=rng.getrandbits(128))),
+        })
+        loc = loc_by_id[loc_id]
+        location_obj = {k: loc[k] for k in ("archived", "code", "country_id", "hierarchy", "latitude",
+                                            "level", "location_id", "longitude", "name", "region_id",
+                                            "version")}
+        mt = mt_by_id[mt_id]
         for j in range(2):
-            cid = str(uuid.uuid4())
-            campaign_ids.append(cid)
-            cur.execute(
-                "INSERT INTO hs_campaigns (id, name, advertiser_id, status, start_date, end_date, budget, currency, created_at, updated_at) "
-                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
-                (cid, f"DOOH Campaign {i+1}-{j+1}", adv_id,
-                 random.choice(["active", "draft", "completed"]),
-                 _past_date(60), _future_date(30),
-                 round(random.uniform(5000, 100000), 2), "USD", now, now))
+            unit_id = 30101 + s_idx * 2 + j
+            units.append((unit_id, owner))
+            w, h = rng.choice([(1920, 1080), (1080, 1920), (1280, 720)])
+            heard = round(rng.uniform(5, 900), 1)
+            played = round(rng.uniform(5, 3600), 1)
+            ts = _hs_ts(rng.uniform(100, 400))
+            _hs_insert(cur, "hs_units", {
+                "unit_id": unit_id, "active": True,
+                "allow_audio": False, "allow_flash": False, "allow_html": rng.random() < 0.5,
+                "allow_image": True, "allow_video": True, "allow_zip": False,
+                "available_for_adserver": True, "available_for_deals": True,
+                "available_for_open_exchange": rng.random() < 0.7, "available_for_storefront": False,
+                "blacklist_unique_advertiser_ids": [], "created_on_utc": ts,
+                "description": f"{sname} screen {j + 1}",
+                "enable_strict_iab_blacklisting": False, "enable_strict_iab_frequency_capping": False,
+                "external_id": f"SCR-{s_idx + 1:02d}{j + 1}", "facing_direction": None,
+                "floor_cpm": round(rng.uniform(2, 12), 2), "image_uri": None,
+                "impression_verifier_vendor": "geopath", "impression_verifier_vendor_external_id": None,
+                "latitude": round(lat + rng.uniform(-0.002, 0.002), 6), "location": location_obj,
+                "location_id": loc_id, "longitude": round(lon + rng.uniform(-0.002, 0.002), 6),
+                "loop_length": 120, "max_spot_length": 30, "media_type": mt, "mediatype_id": mt_id,
+                "mediatype_name": mt["name"], "min_seconds_between_ad_domain_plays": 0,
+                "min_seconds_between_creative_category_plays": 0, "min_seconds_between_iab_category_plays": 0,
+                "min_spot_length": 5, "modified_on_utc": ts, "name": f"{sname} - Screen {j + 1}",
+                "network_id": net_id, "operating_hours": always, "owner_id": owner,
+                "physical_screen_height_cm": rng.choice([None, 120, 300]),
+                "physical_screen_width_cm": rng.choice([None, 210, 540]), "physical_unit_count": None,
+                "screen_height": h, "screen_width": w, "site_id": site_id, "spot_length": 15,
+                "timezone": tz, "uuid": str(uuid.UUID(int=rng.getrandbits(128))),
+                "weekly_impressions": rng.randint(20000, 400000), "weekly_traffic": rng.randint(50000, 900000),
+                "last_heard_from_seconds_ago": heard, "last_heard_from_utc": _hs_ts(heard / 86400),
+                "last_played_on_seconds_ago": played, "last_played_on_utc": _hs_ts(played / 86400),
+                "has_audience_data": unit_id in (30101, 30102),
+            }, json_fields={"blacklist_unique_advertiser_ids", "facing_direction", "image_uri",
+                            "impression_verifier_vendor_external_id", "location", "media_type",
+                            "physical_unit_count"})
+    unit_ids = [u for u, _ in units]
+    unit_owner = dict(units)
 
-    # Line Items
-    lineitem_ids = []
-    for camp_id in campaign_ids[:6]:
-        for k in range(random.randint(1, 3)):
-            lid = str(uuid.uuid4())
-            lineitem_ids.append(lid)
-            cur.execute(
-                "INSERT INTO hs_lineitems (id, name, campaign_id, status, start_date, end_date, budget, cpm, impressions_goal, created_at, updated_at) "
-                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
-                (lid, f"Line Item {k+1}", camp_id, random.choice(["active", "draft"]),
-                 _past_date(30), _future_date(30),
-                 round(random.uniform(1000, 20000), 2),
-                 round(random.uniform(1.0, 15.0), 2),
-                 random.randint(10000, 500000), now, now))
+    unitpacks = [
+        (4401, "Premium NYC Pack", 701, [30101, 30102]),
+        (4402, "Transit Pack", 702, [30103, 30104]),
+        (4403, "Airport Pack", 704, [30107, 30108, 30109, 30110]),
+    ]
+    for pack_id, pname, owner, members in unitpacks:
+        ts = _hs_ts(rng.uniform(30, 200))
+        _hs_insert(cur, "hs_unitpacks", {
+            "unitpack_id": pack_id, "active": True, "created_on_utc": ts, "description": f"Mock {pname}",
+            "external_id": f"PACK-{pack_id}", "modified_on_utc": ts, "name": pname, "owner_id": owner,
+            "prepopulation_option": "none",
+        })
+        for unit_id in members:
+            _hs_insert(cur, "hs_unitpack_units", {"unitpack_id": pack_id, "unit_id": unit_id})
 
-    # Creatives
-    creative_ids = []
+    for i, unit_id in enumerate(unit_ids[:4]):
+        ts = _hs_ts(rng.uniform(10, 100))
+        _hs_insert(cur, "hs_unit_languages", {
+            "unitlanguage_id": 89001 + i, "created_on_utc": ts, "language_id": 1,
+            "modified_on_utc": ts, "unit_id": unit_id})
+    prop_id = 89501
+    for unit_id in unit_ids[:4]:
+        for name, value in [("brightness", "high"), ("orientation", "landscape"), ("audio", "0")]:
+            ts = _hs_ts(rng.uniform(10, 100))
+            _hs_insert(cur, "hs_unit_properties", {
+                "unitproperty_id": prop_id, "created_on_utc": ts, "modified_on_utc": ts,
+                "name": name, "unit_id": unit_id, "value": value})
+            prop_id += 1
+
+    for unit_id in unit_ids[:2]:
+        stamp = _hs_ts()
+        for dow in range(7):
+            for hour in range(24):
+                cur.execute(
+                    "INSERT INTO hs_concentrations (unit_id, day_of_week, hour, audience_count, updated_at) "
+                    "VALUES (%s,%s,%s,%s,%s)",
+                    (unit_id, dow, hour, round(rng.uniform(5, 200), 1), stamp))
+
+    # ── Buy side: accounts, advertisers, creatives, campaigns, line items ─────
+    accounts = [(3101, "Horizon Media Group", "HZN-001"), (3102, "Omnicom Media", None),
+                (3103, "Publicis Groupe", None)]
+    acct_by_id = {}
+    for acct_id, name, ext in accounts:
+        row = {"account_id": acct_id, "external_id": ext, "logo_url": None, "name": name,
+               "organization_id": org}
+        acct_by_id[acct_id] = row
+        _hs_insert(cur, "hs_accounts", row)
+
+    advertisers = [("Acme Corp DOOH", "acme.com", 3101), ("TechNova Outdoor", "technova.com", 3101),
+                   ("GreenLeaf OOH", "greenleaf.com", 3102), ("Sunset Travel", "sunsettravel.com", 3102),
+                   ("Amazon Ads", "amazon.com", 3103)]
+    adv_ids = []
+    for i, (name, domain, _acct) in enumerate(advertisers):
+        adv_id = 48201 + i
+        adv_ids.append(adv_id)
+        ts = _hs_ts(rng.uniform(100, 700))
+        _hs_insert(cur, "hs_advertisers", {
+            "advertiser_id": adv_id, "created_on_utc": ts, "external_id": None, "modified_on_utc": ts,
+            "name": name, "organization_id": org,
+            "unique_advertiser": {"advertiser_domains": [{"domain": domain}], "logo_url": None,
+                                  "name": name, "uniqueadvertiser_id": 77001 + i},
+        }, json_fields={"external_id", "unique_advertiser"})
+
+    creatives_by_adv = {a: [] for a in adv_ids}
     for i in range(10):
-        cid = str(uuid.uuid4())
-        creative_ids.append(cid)
-        cur.execute(
-            "INSERT INTO hs_creatives (id, name, advertiser_id, type, status, width, height, file_url, approval_status, created_at, updated_at) "
-            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
-            (cid, f"DOOH Creative {i+1}", advertiser_ids[i % len(advertiser_ids)],
-             random.choice(["video", "image"]), "active",
-             random.choice([1920, 1080, 1280]), random.choice([1080, 1920, 720]),
-             f"https://cdn.mock.local/creative_{i+1}.mp4",
-             random.choice(["approved", "pending_review", "approved"]), now, now))
+        creative_id = 85001 + i
+        adv_id = adv_ids[i % len(adv_ids)]
+        creatives_by_adv[adv_id].append(creative_id)
+        is_video = i % 2 == 0
+        w, h = rng.choice([(1920, 1080), (1080, 1920), (1280, 720)])
+        state = rng.choice(["approved", "approved", "pending"])
+        created = _hs_ts(rng.uniform(20, 120))
+        targeting = _hs_empty_inventory_targeting(87001 + i)
+        targeting["unit_ids"] = sorted(rng.sample(unit_ids, 3))
+        ext = "mp4" if is_video else "jpg"
+        _hs_insert(cur, "hs_creatives", {
+            "creative_id": creative_id, "advertiser_id": adv_id, "created_at": created,
+            "creative_files": [{
+                "archived": False, "creative_id": creative_id, "creativefile_id": 86001 + i,
+                "duration": 15.0 if is_video else None, "external_id": f"CF-{86001 + i}",
+                "file_size": rng.randint(200_000, 25_000_000), "file_validation_errors": None,
+                "format": "video/mp4" if is_video else "image/jpeg", "generated": False,
+                "height": h, "is_vast": False, "name": f"creative_{i + 1}.{ext}", "placement_type": None,
+                "prefetch_approval": None, "prefetch_is_external": False, "tag_content": None,
+                "tag_type": None, "url": f"https://cdn.mock.local/creative_{i + 1}.{ext}",
+                "uuid": str(uuid.UUID(int=rng.getrandbits(128))), "width": w,
+            }],
+            "daypart": always, "iab_categories": [rng.choice(["IAB3", "IAB8", "IAB19", "IAB20"])],
+            "inventory_targeting": targeting, "language_ids": [1], "name": f"DOOH Creative {i + 1}",
+            "organization_id": org, "retired_at": None, "run_state": "active" if state == "approved" else "inactive",
+            "state": state, "submitted_at": created if state != "draft" else None,
+            "uuid": str(uuid.UUID(int=rng.getrandbits(128))), "last_played_time_utc": None,
+        }, json_fields={"creative_files", "iab_categories", "inventory_targeting", "language_ids",
+                        "last_played_time_utc"})
 
-    # Creative approvals
-    for cid in creative_ids[:6]:
+    campaign_ids = []
+    for i, adv_id in enumerate(adv_ids):
+        for j in range(2):
+            campaign_id = 61001 + i * 2 + j
+            campaign_ids.append((campaign_id, adv_id))
+            ts = _hs_ts(rng.uniform(10, 90))
+            budget = round(rng.uniform(5000, 100000), 2)
+            _hs_insert(cur, "hs_campaigns", {
+                "campaign_id": campaign_id,
+                "account_id": None if campaign_id == 61010 else advertisers[i][2],
+                "advertiser_id": adv_id, "budget": budget,
+                "budget_cap": budget if j == 0 else None,
+                "campaign_properties": [{"key": "po_number", "value": f"PO-{campaign_id}"}],
+                "campaign_type": "standard", "cap": None, "created_on_utc": ts,
+                "end_date": _future_date(30), "min_seconds_between_plays": 0, "modified_on_utc": ts,
+                "name": f"DOOH Campaign {i + 1}-{j + 1}", "notes": None, "organization_id": org,
+                "pacing_budget": None, "pacing_budget_mode": None, "pacing_strategy": None,
+                "priority": None, "start_date": _past_date(60),
+            }, json_fields={"campaign_properties", "cap", "pacing_budget", "pacing_budget_mode",
+                            "pacing_strategy", "priority"})
+
+    deal_ids = ["DEAL-OF-001", "DEAL-LA-001", "DEAL-PA-001"]
+    lineitem_id = 72001
+    lic_id = 88001
+    for campaign_id, adv_id in campaign_ids[:6]:
+        for k in range(rng.randint(1, 3)):
+            targeted = sorted(rng.sample(unit_ids, rng.randint(2, 4)))
+            owner_ids = sorted({unit_owner[u] for u in targeted})
+            creative_ids = creatives_by_adv[adv_id][: rng.randint(1, 2)]
+            deal_id = deal_ids.pop(0) if deal_ids else None
+            state = rng.choice(["approved", "draft"])
+            ts = _hs_ts(rng.uniform(5, 60))
+            record = {
+                "lineitem_id": lineitem_id, "ad_duration": 15,
+                "budget": round(rng.uniform(1000, 20000), 2), "budget_mode": "total",
+                "cadence": 1.0, "cadence_smooth_catchup": False, "campaign_id": campaign_id,
+                "cancelled_at": None, "cap": None, "cpp": None, "created_at": ts,
+                "created_by": "buyer@mock.local", "created_on_utc": ts, "creative_ids": creative_ids,
+                "daypart": always, "delivery_curve": "even", "demographic_ids": [], "external_id": None,
+                "flight_from": _past_date(30), "flight_to": _future_date(30),
+                "is_cpm_from_rate_card": False, "lineitem_properties": [],
+                "market_targeted_impressions": rng.choice([None, rng.randint(10000, 500000)]),
+                "max_bid_cpm": None, "mediaowner_ids": owner_ids,
+                "min_concentration_factor": 0.0, "min_seconds_between_plays": 0, "modified_on_utc": ts,
+                "name": f"Line Item {k + 1}", "notes": None, "package_id": None, "priority": 5,
+                "purchase_type": "deal" if deal_id else "direct",
+                "run_state": "running" if state == "approved" else "not_started", "state": state,
+                "submitted_at": ts if state == "approved" else None, "unit_ids": targeted,
+                "cpm_net": [],
+            }
+            for owner in owner_ids:
+                cpm = round(rng.uniform(4, 15), 2)
+                record["cpm_net"].append({"owner_id": owner, "cpm": cpm, "cpm_min": round(cpm * 0.8, 2),
+                                          "cpm_max": round(cpm * 1.2, 2), "cpm_avg": cpm})
+            if deal_id:
+                record["deal_id"] = deal_id
+            _hs_insert(cur, "hs_lineitems", record, json_fields={
+                "cpp", "creative_ids", "demographic_ids", "external_id", "lineitem_properties",
+                "max_bid_cpm", "mediaowner_ids", "unit_ids", "cpm_net"})
+            for creative_id in creative_ids:
+                _hs_insert(cur, "hs_lineitem_creatives", {
+                    "lineitemcreative_id": lic_id, "lineitem_id": lineitem_id, "creative_id": creative_id,
+                    "local_from_date": None, "local_to_date": None, "weight": 1})
+                lic_id += 1
+            if deal_id:
+                _hs_insert(cur, "hs_lineitem_deal_creatives", {
+                    "lineitem_id": lineitem_id, "creative_id": creative_ids[0], "deal_id": deal_id,
+                    "deal_flight_from": record["flight_from"], "deal_flight_to": record["flight_to"],
+                    "local_from_date": None, "local_to_date": None,
+                }, json_fields={"local_from_date", "local_to_date"})
+            lineitem_id += 1
+
+    for creative_id in range(85001, 85007):
         cur.execute(
             "INSERT INTO hs_creative_approvals (id, creative_id, media_owner_id, approval_status, created_at, updated_at) "
             "VALUES (%s,%s,%s,%s,%s,%s)",
-            (str(uuid.uuid4()), cid, pub_ids[0],
-             random.choice(["approved", "pending", "approved"]), now, now))
+            (str(uuid.UUID(int=rng.getrandbits(128))), creative_id, "hs-pub-001",
+             rng.choice(["approved", "pending", "approved"]), _hs_ts(5), _hs_ts(1)))
 
-    # Networks
-    network_ids = []
-    for nname in ["Downtown Digital Network", "Transit Media Network", "Mall Network", "Airport Network"]:
-        nid = str(uuid.uuid4())
-        network_ids.append(nid)
-        cur.execute("INSERT INTO hs_networks (id, name, description, created_at, updated_at) VALUES (%s,%s,%s,%s,%s)",
-                    (nid, nname, f"Mock {nname}", now, now))
-
-    # Sites
-    site_data = [
-        ("Times Square Hub", 0, "1 Times Square", "New York", "USA"),
-        ("Union Station", 0, "50 Massachusetts Ave", "Washington DC", "USA"),
-        ("Eaton Centre", 1, "220 Yonge St", "Toronto", "CAN"),
-        ("Pearson Airport T1", 3, "6301 Silver Dart Dr", "Mississauga", "CAN"),
-        ("LAX Terminal 4", 2, "1 World Way", "Los Angeles", "USA"),
-    ]
-    site_ids = []
-    for sname, net_idx, addr, city, country in site_data:
-        sid = str(uuid.uuid4())
-        site_ids.append(sid)
-        cur.execute(
-            "INSERT INTO hs_sites (id, name, network_id, external_id, address, city, country, created_at, updated_at) "
-            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)",
-            (sid, sname, network_ids[net_idx], f"EXT-{sname[:4].upper()}", addr, city, country, now, now))
-
-    # Units (linked to sites)
-    unit_ids = []
-    venue_types = [105, 205, 301, 401, 501]
-    for i, site_id in enumerate(site_ids):
-        for j in range(2):
-            uid = str(uuid.uuid4())
-            unit_ids.append(uid)
-            w, h = random.choice([(1920, 1080), (1080, 1920), (1280, 720)])
-            cur.execute(
-                "INSERT INTO hs_units (id, name, site_id, external_id, width, height, venue_type_id, status, created_at, updated_at) "
-                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
-                (uid, f"Screen {i+1}-{j+1}", site_id, f"SCR-{i+1:02d}{j+1}",
-                 w, h, venue_types[i % len(venue_types)], "active", now, now))
-
-    # Unit Packs
-    for pname in ["Premium NYC Pack", "Transit Pack", "Airport Pack"]:
-        pid = str(uuid.uuid4())
-        cur.execute("INSERT INTO hs_unitpacks (id, name, description, created_at, updated_at) VALUES (%s,%s,%s,%s,%s)",
-                    (pid, pname, f"Mock {pname}", now, now))
-
-    # Demographics
-    demo_data = [
-        ("Male 18-34", "GNDR-M|AGE-18-34"), ("Female 18-34", "GNDR-F|AGE-18-34"),
-        ("Adults 25-54", "AGE-25-54"), ("High Income", "HHI-100K-*"),
-        ("Young Adults", "AGE-18-24"), ("Seniors 65+", "AGE-65-*"),
-    ]
-    for dname, dcode in demo_data:
-        cur.execute("INSERT INTO hs_demographics (id, name, code, description, created_at) VALUES (%s,%s,%s,%s,%s)",
-                    (str(uuid.uuid4()), dname, dcode, f"Demographic: {dname}", now))
-
-    # Languages
-    lang_data = [("en", "English"), ("fr", "French"), ("es", "Spanish"),
-                 ("zh", "Chinese"), ("de", "German"), ("ja", "Japanese")]
-    lang_ids = {}
-    for code, name in lang_data:
-        lid = str(uuid.uuid4())
-        lang_ids[code] = lid
-        cur.execute("INSERT INTO hs_languages (id, name, code) VALUES (%s,%s,%s)", (lid, name, code))
-
-    # Locations
-    loc_data = [
-        ("New York Metro", "USA", "NY", "New York"),
-        ("Los Angeles Metro", "USA", "CA", "Los Angeles"),
-        ("Toronto Metro", "CAN", "ON", "Toronto"),
-        ("Chicago Metro", "USA", "IL", "Chicago"),
-        ("Montreal Metro", "CAN", "QC", "Montreal"),
-    ]
-    for lname, country, region, city in loc_data:
-        cur.execute("INSERT INTO hs_locations (id, name, country, region, city) VALUES (%s,%s,%s,%s,%s)",
-                    (str(uuid.uuid4()), lname, country, region, city))
-
-    # Mediatypes
-    for mtname in ["Digital Billboard", "Street Furniture", "Transit", "Airport", "Retail"]:
-        cur.execute("INSERT INTO hs_mediatypes (id, name, description) VALUES (%s,%s,%s)",
-                    (str(uuid.uuid4()), mtname, f"DOOH {mtname} format"))
-
-    # Unit Languages
-    for uid in unit_ids[:4]:
-        cur.execute("INSERT INTO hs_unit_languages (id, unit_id, language_id, created_at) VALUES (%s,%s,%s,%s)",
-                    (str(uuid.uuid4()), uid, lang_ids["en"], now))
-
-    # Unit Properties
-    for uid in unit_ids[:4]:
-        for key, val in [("brightness", "high"), ("orientation", "landscape"), ("audio", "0")]:
-            cur.execute("INSERT INTO hs_unit_properties (id, unit_id, key, value, created_at) VALUES (%s,%s,%s,%s,%s)",
-                        (str(uuid.uuid4()), uid, key, val, now))
-
-    # Concentrations (sample hourly data for first 2 units)
-    for uid in unit_ids[:2]:
-        for dow in range(7):
-            for hour in range(24):
-                audience = round(random.uniform(5, 200), 1)
-                cur.execute(
-                    "INSERT INTO hs_concentrations (unit_id, day_of_week, hour, audience_count, updated_at) "
-                    "VALUES (%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING",
-                    (uid, dow, hour, audience, now))
-
-    # Report Definitions
-    report_def_ids = []
-    for rname in ["Impressions by Unit", "Campaign Performance", "Audience Demographics Report"]:
-        rid = str(uuid.uuid4())
-        report_def_ids.append(rid)
-        cur.execute("INSERT INTO hs_report_definitions (id, name, description, query_config, created_at) VALUES (%s,%s,%s,%s,%s)",
-                    (rid, rname, f"Mock {rname}", "{}", now))
-
-    # Report Executions
-    for rid in report_def_ids:
-        cur.execute(
-            "INSERT INTO hs_report_executions (id, definition_id, status, download_url, created_at, updated_at) VALUES (%s,%s,%s,%s,%s,%s)",
-            (str(uuid.uuid4()), rid, "completed",
-             f"https://mock.adbridge.local/reports/{rid}.csv", now, now))
-
-    # Custom Events
-    event_ids = []
-    for ename in ["Super Bowl Weekend", "Black Friday", "Holiday Season"]:
-        eid = str(uuid.uuid4())
-        event_ids.append(eid)
-        cur.execute("INSERT INTO hs_custom_events (id, name, description, status, created_at, updated_at) VALUES (%s,%s,%s,%s,%s,%s)",
-                    (eid, ename, f"Mock event: {ename}", "active", now, now))
-
-    # LineItem-Creative associations
-    for i, lid in enumerate(lineitem_ids[:5]):
-        cid = creative_ids[i % len(creative_ids)]
-        cur.execute("INSERT INTO hs_lineitem_creatives (id, lineitem_id, creative_id, created_at) VALUES (%s,%s,%s,%s)",
-                    (str(uuid.uuid4()), lid, cid, now))
-        cur.execute("INSERT INTO hs_lineitem_units (lineitem_id, unit_id) VALUES (%s,%s) ON CONFLICT DO NOTHING",
-                    (lid, unit_ids[i % len(unit_ids)]))
+    # ── Reporting ─────────────────────────────────────────────────────────────
+    report_defs = [(5501, "Impressions by Unit", ["unit_id"]),
+                   (5502, "Campaign Performance", ["campaign_id", "lineitem_id"]),
+                   (5503, "Audience Demographics Report", ["unit_id", "demographic_id"])]
+    for i, (def_id, name, dims) in enumerate(report_defs):
+        executed = _hs_ts(1 + i)
+        _hs_insert(cur, "hs_report_definitions", {
+            "report_definition_id": def_id,
+            "definition_json": {
+                "breakdown": "day", "format": "csv", "metrics": ["impressions", "plays", "spend"],
+                "dimensions": dims,
+                "dates": {"mode": "relative", "start_date": None, "end_date": None,
+                          "date_range": "last_7_days", "inclusive": True},
+                "defaultReportOutputFormat": "csv", "timezone": "UTC",
+                "filters": [{"property": "campaign_id", "values": [61001, 61002]}],
+                "options": {"include_header_bidder_data": False},
+            },
+            "exchange_id": None, "last_executed_on_utc": executed, "name": name, "organization_id": org,
+        }, json_fields={"definition_json", "exchange_id"})
+        exec_id = 5601 + i
+        _hs_insert(cur, "hs_report_executions", {
+            "report_execution_id": exec_id, "execution_finished_time_utc": executed,
+            "execution_started_time_utc": executed, "progress": 100.0, "report_definition_id": def_id,
+            "report_file_url": f"https://mock.adbridge.local/reports/{exec_id}.csv",
+            "status_code": "completed", "status_message": None,
+        }, json_fields={"status_message"})
 
 
 def _migrate_adswizz_v9(cur):

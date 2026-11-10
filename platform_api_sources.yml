@@ -29,7 +29,13 @@ platforms:
 
   hivestack:
     module: app/routes/hivestack.py
+    mock_prefix: /hivestack
     base_url: https://apps.hivestack.com/api/v2/
+    # Authoritative contract, supplied by the user. Response models were inferred
+    # from live GET /api/v2/* samples. main.py serves this file as the /hivestack
+    # part of /openapi.json, and the hs_ tables use its field names as columns.
+    spec: app/specs/hivestack.openapi.json
+    retrieved: 2026-11-10
 
   stackadapt:
     module: app/routes/stackadapt.py

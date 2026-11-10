@@ -11,7 +11,7 @@ A mock API layer for local integration testing against ad-platform APIs. Built w
 | `/dv360/v4` | Google Display & Video 360 | [DV360 API v4 reference](https://developers.google.com/display-video/api/reference/rest); delivery reporting mirrors the [Bid Manager API](https://developers.google.com/bid-manager/reference/rest) |
 | `/triton` | Triton Digital Metrics | — |
 | `/triton-booking` | Triton Digital Booking (TAP) | — |
-| `/hivestack` | Hivestack OpenRTB 2.5 DOOH | [apps.hivestack.com/api/v2](https://apps.hivestack.com/api/v2/) (base URL) |
+| `/hivestack` | Hivestack OpenRTB 2.5 DOOH | [apps.hivestack.com/api/v2](https://apps.hivestack.com/api/v2/) (base URL); built from the user-supplied OpenAPI spec `app/specs/hivestack.openapi.json` (response models inferred from live API samples, 2026-11-10) |
 | `/adswizz/v9` | AdsWizz Domain API v9 | [AdsWizz Domain API v9 docs](https://docs.adswizz.com/domain-api/v9/) + [OpenAPI spec](https://docs.adswizz.com/domain-api/v9/openapi.json) |
 | `/thetradedesk` | The Trade Desk Platform API v3 | — |
 | `/gam/v1` | Google Ad Manager REST API v1 | [Ad Manager API reference](https://developers.google.com/ad-manager/api/beta/reference/rest) |
