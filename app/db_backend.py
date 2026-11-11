@@ -292,10 +292,14 @@ def init_db():
         _seed_triton, _seed_hivestack, _seed_adswizz,
         _seed_thetradedesk, _seed_gam, _seed_basisuil,
         _seed_radioworkflow, _seed_stackadapt, _seed_freewheel, _now,
+        _migrate_hivestack_v2,
     )
 
     conn = get_connection()
     cur = conn.cursor()
+
+    # Drop tables whose primary keys changed before CREATE TABLE IF NOT EXISTS runs
+    _migrate_hivestack_v2(conn)
 
     # Create tables
     init_db_schema(conn)

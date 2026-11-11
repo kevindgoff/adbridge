@@ -10,3 +10,12 @@ apis:
   basisuil: true
   radioworkflow: true
   stackadapt: true
+
+hivestack:
+  # sample: load captured live records from sample_dir, synthesize what the capture lacks.
+  #         Falls back to synthetic when the directory is missing (it is git-ignored).
+  # synthetic: generated data only.
+  # Seeding only runs on an empty database; to switch an existing one run
+  #   python -m app.hivestack_import --replace
+  seed: sample
+  sample_dir: data/hivestack/sample
