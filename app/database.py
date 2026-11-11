@@ -2,7 +2,9 @@ import uuid
 import os
 import json
 import random
+import re
 from datetime import datetime, timedelta
+from pathlib import Path
 
 from dotenv import load_dotenv
 
@@ -10,6 +12,7 @@ load_dotenv()
 
 # ─── Delegate get_db / init_db to the backend abstraction ───────────────────
 from app.db_backend import get_db, init_db  # noqa: F401 — re-exported for all importers
+from app.hivestack_model import CAPTURE_ENTITIES, JSON_FIELDS
 
 
 def _uuid():
@@ -2898,7 +2901,37 @@ def _seed_triton(cur, now):
                 )
 
 
-HS_ORGANIZATION_ID = 5021  # the buyer organization every seeded Hivestack record belongs to
+def _hs_settings():
+    from app.config import get_hivestack_settings
+    return get_hivestack_settings()
+
+
+def _hs_sample_dir():
+    """The sample capture directory when seed mode is "sample" and it exists, else None."""
+    s = _hs_settings()
+    if s["seed"] != "sample":
+        return None
+    d = Path(s["sample_dir"])
+    if d.is_dir() and any((d / f"{stem}.json").exists() for stem, _, _ in CAPTURE_ENTITIES):
+        return d
+    return None
+
+
+def _hs_organization_id():
+    """Organization for new records: the captured accounts' organization in sample
+    mode, else 5021 (the synthetic buyer organization)."""
+    d = _hs_sample_dir()
+    if d and (d / "accounts.json").exists():
+        try:
+            for r in _hs_read_capture(d / "accounts.json"):
+                if r.get("organization_id") is not None:
+                    return r["organization_id"]
+        except (ValueError, OSError):
+            pass
+    return 5021
+
+
+# HS_ORGANIZATION_ID is set at the end of this module, once _hs_read_capture exists.
 
 # Tables whose shape changed with the Hivestack v2 spec (app/specs/hivestack.openapi.json),
 # plus tables the v2 shape replaced. Children first so SQLite FK checks never trip.
@@ -2954,8 +2987,10 @@ def _hs_ts(days_ago=0.0):
     return (datetime.utcnow() - timedelta(days=days_ago)).isoformat(timespec="milliseconds")
 
 
-def _hs_insert(cur, table, record, json_fields=()):
-    """Insert a dict whose keys are column names. json_fields are JSON-encoded."""
+def _hs_insert(cur, table, record, json_fields=None):
+    """Insert a dict whose keys are column names. JSON columns (app.hivestack_model) are encoded."""
+    if json_fields is None:
+        json_fields = JSON_FIELDS.get(table, ())
     cols = list(record)
     vals = [
         (None if record[c] is None else json.dumps(record[c])) if c in json_fields else record[c]
@@ -3083,19 +3118,163 @@ def _seed_hivestack_rtb(cur, now):
 def _seed_hivestack_v2(cur):
     """Hivestack API v2 resources in the live-API shape (see app/specs/hivestack.openapi.json).
 
-    IDs, cross-references and value types are consistent across resources.
-    Enum-like strings (state, run_state, campaign_type, budget_mode, ...) are
-    plausible placeholders: the spec gives their type but not their values.
+    Mode comes from config.yml `hivestack.seed`:
+      sample    — load the captured live records (_load_hivestack_capture), then
+                  synthesize the resources the capture lacks around the real IDs
+      synthetic — generate everything
+    Enum-like strings (state, run_state, campaign_type, budget_mode, ...) in the
+    synthesized rows are plausible placeholders: the spec gives their type, not values.
     """
     cur.execute("SELECT COUNT(*) FROM hs_accounts")
     if cur.fetchone()["count"] > 0:
         return
 
     rng = random.Random(20261110)  # deterministic seed data
-    org = HS_ORGANIZATION_ID
-    always = "1" * 168  # daypart: one flag per hour of the week
+    sample = _hs_sample_dir()
+    if sample:
+        counts = _load_hivestack_capture(cur, sample)
+        print(f"Hivestack: loaded sample capture from {sample}: {counts}")
+    else:
+        if _hs_settings()["seed"] == "sample":
+            print(f"Hivestack: sample dir {_hs_settings()['sample_dir']} not found; seeding synthetic data.")
+        _seed_hivestack_v2_synthetic(cur, rng)
+    _seed_hivestack_v2_dependents(cur, rng)
 
-    # ── Reference data: locations, media types, languages, demographics ──────
+
+# ── Sample capture import ─────────────────────────────────────────────────────
+
+def _hs_table_columns(table):
+    """Column names of a table, read from SCHEMA (backend-neutral)."""
+    m = re.search(rf"CREATE TABLE IF NOT EXISTS {table} \((.*?)\n\);", SCHEMA, re.S)
+    if not m:
+        raise KeyError(table)
+    return {line.strip().split()[0] for line in m.group(1).splitlines()
+            if line.strip() and not line.strip().startswith(("PRIMARY", "UNIQUE", "--"))}
+
+
+def _hs_read_capture(path):
+    """Records from one captured file: {"_meta": ..., "records": [...]} or a bare list."""
+    data = json.loads(Path(path).read_text(encoding="utf-8-sig"))
+    if isinstance(data, dict) and isinstance(data.get("records"), list):
+        return data["records"]
+    if isinstance(data, list):
+        return data
+    raise ValueError(f"{path}: expected a JSON list or an object with a 'records' list")
+
+
+def _hs_upsert(cur, table, pk, record, update=True):
+    """INSERT ... ON CONFLICT (pk) DO UPDATE (or DO NOTHING). Works on Postgres and SQLite."""
+    json_fields = JSON_FIELDS.get(table, ())
+    cols = list(record)
+    vals = [(None if record[c] is None else json.dumps(record[c])) if c in json_fields else record[c]
+            for c in cols]
+    sets = ", ".join(f"{c} = EXCLUDED.{c}" for c in cols if c != pk)
+    action = f"DO UPDATE SET {sets}" if update and sets else "DO NOTHING"
+    cur.execute(
+        f"INSERT INTO {table} ({', '.join(cols)}) VALUES ({', '.join(['%s'] * len(cols))}) "
+        f"ON CONFLICT ({pk}) {action}",
+        vals,
+    )
+
+
+def _load_hivestack_capture(cur, directory):
+    """Upsert captured live records from `directory` into the hs_ v2 tables.
+
+    Records are written as captured; column names equal the live field names.
+    Fields with no column are dropped with a warning. Unrecognised files are
+    skipped. Media types and location extras are derived afterwards.
+    Returns {entity: record count}.
+    """
+    directory = Path(directory)
+    known = {stem for stem, _, _ in CAPTURE_ENTITIES} | {"sample_summary"}
+    for f in sorted(directory.glob("*.json")):
+        if f.stem not in known:
+            print(f"Hivestack import: skipping {f.name} (no table mapping)")
+
+    loaded = {}
+    for stem, table, pk in CAPTURE_ENTITIES:
+        path = directory / f"{stem}.json"
+        if not path.exists():
+            continue
+        records = _hs_read_capture(path)
+        columns = _hs_table_columns(table)
+        dropped = sorted({k for r in records for k in r} - columns)
+        if dropped:
+            print(f"Hivestack import: {stem}: no column for {dropped}; values dropped")
+        for r in records:
+            _hs_upsert(cur, table, pk, {k: v for k, v in r.items() if k in columns})
+        loaded[stem] = records
+
+    _hs_derive_mediatypes(cur, loaded.get("units", []))
+    _hs_derive_location_extras(cur, loaded.get("locations", []), loaded.get("units", []))
+    return {stem: len(r) for stem, r in loaded.items()}
+
+
+def _hs_derive_mediatypes(cur, units):
+    """Media types from the object embedded in each unit, plus stubs for missing parents.
+
+    A stub (code = the child code's prefix) only fills a gap so /mediatypes forms a
+    tree; it never overwrites an existing row. A real /mediatypes capture replaces it.
+    """
+    found = {}
+    for u in units:
+        mt = u.get("media_type")
+        if mt and mt.get("mediatype_id") is not None:
+            found[mt["mediatype_id"]] = mt
+    for mt in found.values():
+        _hs_upsert(cur, "hs_mediatypes", "mediatype_id", {
+            k: mt.get(k) for k in ("mediatype_id", "archived", "code", "enumeration_id", "name",
+                                   "parent_mediatype_id")})
+    for mt in found.values():
+        parent = mt.get("parent_mediatype_id")
+        if parent is None or parent in found:
+            continue
+        code = (mt.get("code") or "").split(".")[0] or f"mediatype_{parent}"
+        _hs_upsert(cur, "hs_mediatypes", "mediatype_id", {
+            "mediatype_id": parent, "archived": False, "code": code, "enumeration_id": parent,
+            "name": code.replace("_", " ").title(), "parent_mediatype_id": None,
+        }, update=False)
+
+
+def _hs_derive_location_extras(cur, locations, units):
+    """Fill hierarchy / archived / version, which GET /locations doesn't return.
+
+    Taken from the location object embedded in units where one exists; otherwise
+    hierarchy is built from the country_id / region_id chain and version borrowed
+    from another location in the same country.
+    """
+    embedded = {u["location"]["location_id"]: u["location"] for u in units
+                if isinstance(u.get("location"), dict) and u["location"].get("location_id") is not None}
+    by_id = {loc["location_id"]: loc for loc in locations}
+    version_by_country = {}
+    for e in embedded.values():
+        if e.get("version"):
+            version_by_country.setdefault(e.get("country_id"), e["version"])
+
+    for loc in locations:
+        e = embedded.get(loc["location_id"])
+        if e:
+            hierarchy, archived, version = e.get("hierarchy"), bool(e.get("archived")), e.get("version")
+        else:
+            parts = []
+            for ref in (loc.get("country_id"), loc.get("region_id")):
+                if ref is not None and ref != loc["location_id"] and ref in by_id:
+                    parts.append(by_id[ref]["name"])
+            parts.append(loc["name"])
+            country = loc.get("country_id") if loc.get("country_id") is not None else loc["location_id"]
+            hierarchy, archived, version = " > ".join(parts), False, version_by_country.get(country)
+        cur.execute("UPDATE hs_locations SET hierarchy = %s, archived = %s, version = %s WHERE location_id = %s",
+                    (hierarchy, archived, version, loc["location_id"]))
+
+
+# ── Synthetic data ────────────────────────────────────────────────────────────
+
+def _seed_hivestack_v2_synthetic(cur, rng):
+    """Generated locations, media types, inventory, accounts and advertisers
+    (the resources a sample capture would otherwise provide)."""
+    org = HS_ORGANIZATION_ID
+    always = "1" * 168
+
     # (location_id, code, name, level, country_id, region_id, lat, lon, hierarchy)
     locations = [
         (1, "US", "United States", 1, None, None, None, None, "United States"),
@@ -3140,27 +3319,7 @@ def _seed_hivestack_v2(cur):
         mt_by_id[mt_id] = row
         _hs_insert(cur, "hs_mediatypes", row)
 
-    for lang_id, code, name in [(1, "en", "English"), (2, "fr", "French"), (3, "es", "Spanish"),
-                                (4, "zh", "Chinese"), (5, "de", "German"), (6, "ja", "Japanese")]:
-        _hs_insert(cur, "hs_languages", {"language_id": lang_id, "code": code, "name": name})
-
-    demographics = [
-        (801, "GNDR-M|AGE-18-34", "Male 18-34", "age_gender"),
-        (802, "GNDR-F|AGE-18-34", "Female 18-34", "age_gender"),
-        (803, "AGE-25-54", "Adults 25-54", "age"),
-        (804, "HHI-100K-*", "High Income", "income"),
-        (805, "AGE-18-24", "Young Adults", "age"),
-        (806, "AGE-65-*", "Seniors 65+", "age"),
-    ]
-    for demo_id, code, name, dtype in demographics:
-        ts = _hs_ts(rng.uniform(200, 400))
-        _hs_insert(cur, "hs_demographics", {
-            "demographic_id": demo_id, "code": code, "created_on_utc": ts, "modified_on_utc": ts,
-            "name": name, "organization_id": None, "show_buyers": True, "type": dtype,
-        }, json_fields={"organization_id"})
-
-    # ── Inventory: networks, sites, units, unit packs ─────────────────────────
-    owners = [701, 702, 703, 704, 705]  # media-owner IDs (one per hs_publishers row, same order)
+    # Media-owner IDs 701-705 (one per hs_publishers row, same order)
     networks = [
         (2201, "DDN", "Downtown Digital Network", 701), (2202, "TMN", "Transit Media Network", 702),
         (2203, "MALL", "Mall Network", 703), (2204, "AIR", "Airport Network", 704),
@@ -3170,7 +3329,7 @@ def _seed_hivestack_v2(cur):
         _hs_insert(cur, "hs_networks", {
             "network_id": net_id, "code": code, "created_on_utc": ts, "loop_length": None,
             "modified_on_utc": ts, "name": name, "owner_id": owner, "spot_length": None,
-        }, json_fields={"loop_length", "spot_length"})
+        })
 
     # (site_id, name, owner, location_id, lat, lon, network_id, mediatype_id, timezone)
     sites = [
@@ -3180,7 +3339,6 @@ def _seed_hivestack_v2(cur):
         (9104, "Pearson Airport T1", 704, 20002, 43.6777, -79.6248, 2204, 401, "America/Toronto"),
         (9105, "LAX Terminal 4", 704, 10002, 33.9425, -118.4081, 2204, 401, "America/Los_Angeles"),
     ]
-    units = []  # (unit_id, owner_id)
     for s_idx, (site_id, sname, owner, loc_id, lat, lon, net_id, mt_id, tz) in enumerate(sites):
         ts = _hs_ts(rng.uniform(200, 500))
         _hs_insert(cur, "hs_sites", {
@@ -3196,7 +3354,6 @@ def _seed_hivestack_v2(cur):
         mt = mt_by_id[mt_id]
         for j in range(2):
             unit_id = 30101 + s_idx * 2 + j
-            units.append((unit_id, owner))
             w, h = rng.choice([(1920, 1080), (1080, 1920), (1280, 720)])
             heard = round(rng.uniform(5, 900), 1)
             played = round(rng.uniform(5, 3600), 1)
@@ -3228,26 +3385,74 @@ def _seed_hivestack_v2(cur):
                 "last_heard_from_seconds_ago": heard, "last_heard_from_utc": _hs_ts(heard / 86400),
                 "last_played_on_seconds_ago": played, "last_played_on_utc": _hs_ts(played / 86400),
                 "has_audience_data": unit_id in (30101, 30102),
-            }, json_fields={"blacklist_unique_advertiser_ids", "facing_direction", "image_uri",
-                            "impression_verifier_vendor_external_id", "location", "media_type",
-                            "physical_unit_count"})
-    unit_ids = [u for u, _ in units]
-    unit_owner = dict(units)
+            })
 
-    unitpacks = [
-        (4401, "Premium NYC Pack", 701, [30101, 30102]),
-        (4402, "Transit Pack", 702, [30103, 30104]),
-        (4403, "Airport Pack", 704, [30107, 30108, 30109, 30110]),
-    ]
-    for pack_id, pname, owner, members in unitpacks:
-        ts = _hs_ts(rng.uniform(30, 200))
-        _hs_insert(cur, "hs_unitpacks", {
-            "unitpack_id": pack_id, "active": True, "created_on_utc": ts, "description": f"Mock {pname}",
-            "external_id": f"PACK-{pack_id}", "modified_on_utc": ts, "name": pname, "owner_id": owner,
-            "prepopulation_option": "none",
+    for acct_id, name, ext in [(3101, "Horizon Media Group", "HZN-001"), (3102, "Omnicom Media", None),
+                               (3103, "Publicis Groupe", None)]:
+        _hs_insert(cur, "hs_accounts", {"account_id": acct_id, "external_id": ext, "logo_url": None,
+                                        "name": name, "organization_id": org})
+
+    advertisers = [("Acme Corp DOOH", "acme.com"), ("TechNova Outdoor", "technova.com"),
+                   ("GreenLeaf OOH", "greenleaf.com"), ("Sunset Travel", "sunsettravel.com"),
+                   ("Amazon Ads", "amazon.com")]
+    for i, (name, domain) in enumerate(advertisers):
+        ts = _hs_ts(rng.uniform(100, 700))
+        _hs_insert(cur, "hs_advertisers", {
+            "advertiser_id": 48201 + i, "created_on_utc": ts, "external_id": None, "modified_on_utc": ts,
+            "name": name, "organization_id": org,
+            "unique_advertiser": {"advertiser_domains": [{"domain": domain}], "logo_url": None,
+                                  "name": name, "uniqueadvertiser_id": 77001 + i},
         })
-        for unit_id in members:
-            _hs_insert(cur, "hs_unitpack_units", {"unitpack_id": pack_id, "unit_id": unit_id})
+
+
+def _seed_hivestack_v2_dependents(cur, rng):
+    """Resources a sample capture doesn't cover, built on whatever units,
+    advertisers and accounts are in the tables (captured or synthetic):
+    languages, demographics, unit packs, unit languages/properties,
+    concentrations, creatives, campaigns, line items and their creative
+    links, creative approvals, and reports."""
+    org = HS_ORGANIZATION_ID
+    always = "1" * 168
+
+    cur.execute("SELECT unit_id, owner_id, has_audience_data FROM hs_units ORDER BY unit_id")
+    unit_rows = cur.fetchall()
+    unit_ids = [r["unit_id"] for r in unit_rows]
+    unit_owner = {r["unit_id"]: r["owner_id"] for r in unit_rows}
+    cur.execute("SELECT advertiser_id FROM hs_advertisers ORDER BY advertiser_id")
+    adv_ids = [r["advertiser_id"] for r in cur.fetchall()]
+    cur.execute("SELECT account_id FROM hs_accounts ORDER BY account_id")
+    acct_ids = [r["account_id"] for r in cur.fetchall()]
+
+    # ── Reference data ────────────────────────────────────────────────────────
+    for lang_id, code, name in [(1, "en", "English"), (2, "fr", "French"), (3, "es", "Spanish"),
+                                (4, "zh", "Chinese"), (5, "de", "German"), (6, "ja", "Japanese")]:
+        _hs_insert(cur, "hs_languages", {"language_id": lang_id, "code": code, "name": name})
+
+    for demo_id, code, name, dtype in [
+        (801, "GNDR-M|AGE-18-34", "Male 18-34", "age_gender"),
+        (802, "GNDR-F|AGE-18-34", "Female 18-34", "age_gender"),
+        (803, "AGE-25-54", "Adults 25-54", "age"), (804, "HHI-100K-*", "High Income", "income"),
+        (805, "AGE-18-24", "Young Adults", "age"), (806, "AGE-65-*", "Seniors 65+", "age"),
+    ]:
+        ts = _hs_ts(rng.uniform(200, 400))
+        _hs_insert(cur, "hs_demographics", {
+            "demographic_id": demo_id, "code": code, "created_on_utc": ts, "modified_on_utc": ts,
+            "name": name, "organization_id": None, "show_buyers": True, "type": dtype})
+
+    # ── Inventory extras ──────────────────────────────────────────────────────
+    if unit_ids:
+        packs = [(4401, "Premium Pack", unit_ids[0:2]), (4402, "Commuter Pack", unit_ids[2:4]),
+                 (4403, "Weekend Pack", unit_ids[-4:])]
+        for pack_id, pname, members in packs:
+            if not members:
+                continue
+            ts = _hs_ts(rng.uniform(30, 200))
+            _hs_insert(cur, "hs_unitpacks", {
+                "unitpack_id": pack_id, "active": True, "created_on_utc": ts, "description": f"Mock {pname}",
+                "external_id": f"PACK-{pack_id}", "modified_on_utc": ts, "name": pname,
+                "owner_id": unit_owner[members[0]], "prepopulation_option": "none"})
+            for unit_id in members:
+                _hs_insert(cur, "hs_unitpack_units", {"unitpack_id": pack_id, "unit_id": unit_id})
 
     for i, unit_id in enumerate(unit_ids[:4]):
         ts = _hs_ts(rng.uniform(10, 100))
@@ -3263,40 +3468,21 @@ def _seed_hivestack_v2(cur):
                 "name": name, "unit_id": unit_id, "value": value})
             prop_id += 1
 
-    for unit_id in unit_ids[:2]:
-        stamp = _hs_ts()
+    stamp = _hs_ts()
+    for r in unit_rows:
+        if not r["has_audience_data"]:
+            continue
         for dow in range(7):
             for hour in range(24):
                 cur.execute(
                     "INSERT INTO hs_concentrations (unit_id, day_of_week, hour, audience_count, updated_at) "
                     "VALUES (%s,%s,%s,%s,%s)",
-                    (unit_id, dow, hour, round(rng.uniform(5, 200), 1), stamp))
+                    (r["unit_id"], dow, hour, round(rng.uniform(5, 200), 1), stamp))
 
-    # ── Buy side: accounts, advertisers, creatives, campaigns, line items ─────
-    accounts = [(3101, "Horizon Media Group", "HZN-001"), (3102, "Omnicom Media", None),
-                (3103, "Publicis Groupe", None)]
-    acct_by_id = {}
-    for acct_id, name, ext in accounts:
-        row = {"account_id": acct_id, "external_id": ext, "logo_url": None, "name": name,
-               "organization_id": org}
-        acct_by_id[acct_id] = row
-        _hs_insert(cur, "hs_accounts", row)
+    if not (unit_ids and adv_ids):
+        return
 
-    advertisers = [("Acme Corp DOOH", "acme.com", 3101), ("TechNova Outdoor", "technova.com", 3101),
-                   ("GreenLeaf OOH", "greenleaf.com", 3102), ("Sunset Travel", "sunsettravel.com", 3102),
-                   ("Amazon Ads", "amazon.com", 3103)]
-    adv_ids = []
-    for i, (name, domain, _acct) in enumerate(advertisers):
-        adv_id = 48201 + i
-        adv_ids.append(adv_id)
-        ts = _hs_ts(rng.uniform(100, 700))
-        _hs_insert(cur, "hs_advertisers", {
-            "advertiser_id": adv_id, "created_on_utc": ts, "external_id": None, "modified_on_utc": ts,
-            "name": name, "organization_id": org,
-            "unique_advertiser": {"advertiser_domains": [{"domain": domain}], "logo_url": None,
-                                  "name": name, "uniqueadvertiser_id": 77001 + i},
-        }, json_fields={"external_id", "unique_advertiser"})
-
+    # ── Buy side ──────────────────────────────────────────────────────────────
     creatives_by_adv = {a: [] for a in adv_ids}
     for i in range(10):
         creative_id = 85001 + i
@@ -3307,7 +3493,7 @@ def _seed_hivestack_v2(cur):
         state = rng.choice(["approved", "approved", "pending"])
         created = _hs_ts(rng.uniform(20, 120))
         targeting = _hs_empty_inventory_targeting(87001 + i)
-        targeting["unit_ids"] = sorted(rng.sample(unit_ids, 3))
+        targeting["unit_ids"] = sorted(rng.sample(unit_ids, min(3, len(unit_ids))))
         ext = "mp4" if is_video else "jpg"
         _hs_insert(cur, "hs_creatives", {
             "creative_id": creative_id, "advertiser_id": adv_id, "created_at": created,
@@ -3323,41 +3509,43 @@ def _seed_hivestack_v2(cur):
             }],
             "daypart": always, "iab_categories": [rng.choice(["IAB3", "IAB8", "IAB19", "IAB20"])],
             "inventory_targeting": targeting, "language_ids": [1], "name": f"DOOH Creative {i + 1}",
-            "organization_id": org, "retired_at": None, "run_state": "active" if state == "approved" else "inactive",
-            "state": state, "submitted_at": created if state != "draft" else None,
+            "organization_id": org, "retired_at": None,
+            "run_state": "active" if state == "approved" else "inactive",
+            "state": state, "submitted_at": created,
             "uuid": str(uuid.UUID(int=rng.getrandbits(128))), "last_played_time_utc": None,
-        }, json_fields={"creative_files", "iab_categories", "inventory_targeting", "language_ids",
-                        "last_played_time_utc"})
+        })
 
-    campaign_ids = []
-    for i, adv_id in enumerate(adv_ids):
-        for j in range(2):
-            campaign_id = 61001 + i * 2 + j
-            campaign_ids.append((campaign_id, adv_id))
-            ts = _hs_ts(rng.uniform(10, 90))
-            budget = round(rng.uniform(5000, 100000), 2)
-            _hs_insert(cur, "hs_campaigns", {
-                "campaign_id": campaign_id,
-                "account_id": None if campaign_id == 61010 else advertisers[i][2],
-                "advertiser_id": adv_id, "budget": budget,
-                "budget_cap": budget if j == 0 else None,
-                "campaign_properties": [{"key": "po_number", "value": f"PO-{campaign_id}"}],
-                "campaign_type": "standard", "cap": None, "created_on_utc": ts,
-                "end_date": _future_date(30), "min_seconds_between_plays": 0, "modified_on_utc": ts,
-                "name": f"DOOH Campaign {i + 1}-{j + 1}", "notes": None, "organization_id": org,
-                "pacing_budget": None, "pacing_budget_mode": None, "pacing_strategy": None,
-                "priority": None, "start_date": _past_date(60),
-            }, json_fields={"campaign_properties", "cap", "pacing_budget", "pacing_budget_mode",
-                            "pacing_strategy", "priority"})
+    # About 10 campaigns: 2 per advertiser for small advertiser lists, else 1 each.
+    per_adv = 2 if len(adv_ids) <= 5 else 1
+    campaigns = []  # (campaign_id, advertiser_id)
+    for i, adv_id in enumerate(adv_ids[:10]):
+        account_id = acct_ids[i * len(acct_ids) // len(adv_ids)] if acct_ids else None
+        for j in range(per_adv):
+            campaigns.append((61001 + len(campaigns), adv_id, account_id, i, j))
+    for n, (campaign_id, adv_id, account_id, i, j) in enumerate(campaigns):
+        ts = _hs_ts(rng.uniform(10, 90))
+        budget = round(rng.uniform(5000, 100000), 2)
+        _hs_insert(cur, "hs_campaigns", {
+            "campaign_id": campaign_id,
+            "account_id": None if n == len(campaigns) - 1 else account_id,  # account is optional
+            "advertiser_id": adv_id, "budget": budget, "budget_cap": budget if j == 0 else None,
+            "campaign_properties": [{"key": "po_number", "value": f"PO-{campaign_id}"}],
+            "campaign_type": "standard", "cap": None, "created_on_utc": ts,
+            "end_date": _future_date(30), "min_seconds_between_plays": 0, "modified_on_utc": ts,
+            "name": f"DOOH Campaign {i + 1}-{j + 1}", "notes": None, "organization_id": org,
+            "pacing_budget": None, "pacing_budget_mode": None, "pacing_strategy": None,
+            "priority": None, "start_date": _past_date(60),
+        })
 
     deal_ids = ["DEAL-OF-001", "DEAL-LA-001", "DEAL-PA-001"]
     lineitem_id = 72001
     lic_id = 88001
-    for campaign_id, adv_id in campaign_ids[:6]:
+    for campaign_id, adv_id, _acct, _i, _j in campaigns[:6]:
+        creative_pool = creatives_by_adv[adv_id] or [85001]
         for k in range(rng.randint(1, 3)):
-            targeted = sorted(rng.sample(unit_ids, rng.randint(2, 4)))
-            owner_ids = sorted({unit_owner[u] for u in targeted})
-            creative_ids = creatives_by_adv[adv_id][: rng.randint(1, 2)]
+            targeted = sorted(rng.sample(unit_ids, rng.randint(min(2, len(unit_ids)), min(4, len(unit_ids)))))
+            owner_ids = sorted({unit_owner[u] for u in targeted if unit_owner[u] is not None})
+            creative_ids = creative_pool[: rng.randint(1, 2)]
             deal_id = deal_ids.pop(0) if deal_ids else None
             state = rng.choice(["approved", "draft"])
             ts = _hs_ts(rng.uniform(5, 60))
@@ -3385,9 +3573,7 @@ def _seed_hivestack_v2(cur):
                                           "cpm_max": round(cpm * 1.2, 2), "cpm_avg": cpm})
             if deal_id:
                 record["deal_id"] = deal_id
-            _hs_insert(cur, "hs_lineitems", record, json_fields={
-                "cpp", "creative_ids", "demographic_ids", "external_id", "lineitem_properties",
-                "max_bid_cpm", "mediaowner_ids", "unit_ids", "cpm_net"})
+            _hs_insert(cur, "hs_lineitems", record)
             for creative_id in creative_ids:
                 _hs_insert(cur, "hs_lineitem_creatives", {
                     "lineitemcreative_id": lic_id, "lineitem_id": lineitem_id, "creative_id": creative_id,
@@ -3397,8 +3583,7 @@ def _seed_hivestack_v2(cur):
                 _hs_insert(cur, "hs_lineitem_deal_creatives", {
                     "lineitem_id": lineitem_id, "creative_id": creative_ids[0], "deal_id": deal_id,
                     "deal_flight_from": record["flight_from"], "deal_flight_to": record["flight_to"],
-                    "local_from_date": None, "local_to_date": None,
-                }, json_fields={"local_from_date", "local_to_date"})
+                    "local_from_date": None, "local_to_date": None})
             lineitem_id += 1
 
     for creative_id in range(85001, 85007):
@@ -3412,6 +3597,7 @@ def _seed_hivestack_v2(cur):
     report_defs = [(5501, "Impressions by Unit", ["unit_id"]),
                    (5502, "Campaign Performance", ["campaign_id", "lineitem_id"]),
                    (5503, "Audience Demographics Report", ["unit_id", "demographic_id"])]
+    filter_campaigns = [c[0] for c in campaigns[:2]]
     for i, (def_id, name, dims) in enumerate(report_defs):
         executed = _hs_ts(1 + i)
         _hs_insert(cur, "hs_report_definitions", {
@@ -3422,18 +3608,18 @@ def _seed_hivestack_v2(cur):
                 "dates": {"mode": "relative", "start_date": None, "end_date": None,
                           "date_range": "last_7_days", "inclusive": True},
                 "defaultReportOutputFormat": "csv", "timezone": "UTC",
-                "filters": [{"property": "campaign_id", "values": [61001, 61002]}],
+                "filters": [{"property": "campaign_id", "values": filter_campaigns}],
                 "options": {"include_header_bidder_data": False},
             },
             "exchange_id": None, "last_executed_on_utc": executed, "name": name, "organization_id": org,
-        }, json_fields={"definition_json", "exchange_id"})
+        })
         exec_id = 5601 + i
         _hs_insert(cur, "hs_report_executions", {
             "report_execution_id": exec_id, "execution_finished_time_utc": executed,
             "execution_started_time_utc": executed, "progress": 100.0, "report_definition_id": def_id,
             "report_file_url": f"https://mock.adbridge.local/reports/{exec_id}.csv",
             "status_code": "completed", "status_message": None,
-        }, json_fields={"status_message"})
+        })
 
 
 def _migrate_adswizz_v9(cur):
@@ -4737,3 +4923,7 @@ def _seed_freewheel(cur, now):
         cur.execute(
             "INSERT INTO fw_global_brands (name, global_advertiser_id) VALUES (%s,%s)",
             (f"Global Brand {i+1}", gadv_id))
+
+
+# Organization for seeded and POSTed Hivestack records (see _hs_organization_id)
+HS_ORGANIZATION_ID = _hs_organization_id()

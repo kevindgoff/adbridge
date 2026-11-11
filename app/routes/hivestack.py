@@ -58,6 +58,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, Response
 
 from app.database import HS_ORGANIZATION_ID, get_db
+from app.hivestack_model import JSON_FIELDS
 
 router = APIRouter(prefix="/hivestack")
 
@@ -165,12 +166,13 @@ class _Resource:
     enrich    – hook(conn, items) to fill computed fields after a read.
     """
 
-    def __init__(self, label, table, pk, fields, *, computed=(), json=(), bools=(), omit_null=(),
+    def __init__(self, label, table, pk, fields, *, computed=(), json=None, bools=(), omit_null=(),
                  defaults=None, order=None, id_start=1, prepare=None, enrich=None):
         self.label, self.table, self.pk = label, table, pk
         self.fields = list(fields)
         self.computed = set(computed)
         self.columns = [f for f in self.fields if f not in self.computed]
+        json = JSON_FIELDS.get(table, ()) if json is None else json
         self.json, self.bools, self.omit_null = set(json), set(bools), set(omit_null)
         self.defaults = defaults or {}
         self.order = order or pk
@@ -470,7 +472,6 @@ ADVERTISERS = _Resource(
     "Advertiser", "hs_advertisers", "advertiser_id",
     ["advertiser_id", "created_on_utc", "external_id", "modified_on_utc", "name", "organization_id",
      "unique_advertiser"],
-    json=["external_id", "unique_advertiser"],
     defaults={"external_id": None, "name": "New Advertiser", "organization_id": HS_ORGANIZATION_ID},
     id_start=48201, prepare=_prepare_advertiser)
 
@@ -481,7 +482,6 @@ CAMPAIGNS = _Resource(
      "min_seconds_between_plays", "modified_on_utc", "name", "notes", "organization_id", "pacing_budget",
      "pacing_budget_mode", "pacing_strategy", "priority", "start_date"],
     computed=["account", "advertiser"],
-    json=["campaign_properties", "cap", "pacing_budget", "pacing_budget_mode", "pacing_strategy", "priority"],
     defaults={"account_id": None, "budget": None, "budget_cap": None, "campaign_properties": [],
               "campaign_type": "standard", "cap": None, "end_date": None, "min_seconds_between_plays": 0,
               "name": "New Campaign", "notes": None, "organization_id": HS_ORGANIZATION_ID,
@@ -498,8 +498,6 @@ LINEITEMS = _Resource(
      "min_concentration_factor", "min_seconds_between_plays", "modified_on_utc", "name", "notes",
      "package_id", "priority", "purchase_type", "run_state", "state", "submitted_at", "unit_ids", "cpm_net",
      "deal_id"],
-    json=["cpp", "creative_ids", "demographic_ids", "external_id", "lineitem_properties", "max_bid_cpm",
-          "mediaowner_ids", "unit_ids", "cpm_net"],
     bools=["cadence_smooth_catchup", "is_cpm_from_rate_card"],
     omit_null=["deal_id"],
     defaults={"ad_duration": 15, "budget": None, "budget_mode": "total", "cadence": 1.0,
@@ -519,7 +517,6 @@ CREATIVES = _Resource(
     ["advertiser_id", "created_at", "creative_files", "creative_id", "daypart", "iab_categories",
      "inventory_targeting", "language_ids", "name", "organization_id", "retired_at", "run_state", "state",
      "submitted_at", "uuid", "last_played_time_utc"],
-    json=["creative_files", "iab_categories", "inventory_targeting", "language_ids", "last_played_time_utc"],
     defaults={"advertiser_id": None, "creative_files": [], "daypart": _ALWAYS, "iab_categories": [],
               "language_ids": [], "name": "New Creative", "organization_id": HS_ORGANIZATION_ID,
               "retired_at": None, "run_state": "inactive", "state": "draft", "submitted_at": None,
@@ -539,13 +536,12 @@ LINEITEM_DEAL_CREATIVES = _Resource(
     "Line item deal creative", "hs_lineitem_deal_creatives", "lineitem_id",
     ["lineitem_id", "creative_id", "deal_id", "deal_flight_from", "deal_flight_to", "local_from_date",
      "local_to_date"],
-    json=["local_from_date", "local_to_date"], order="lineitem_id, creative_id, deal_id")
+    order="lineitem_id, creative_id, deal_id")
 
 NETWORKS = _Resource(
     "Network", "hs_networks", "network_id",
     ["code", "created_on_utc", "loop_length", "modified_on_utc", "name", "network_id", "owner_id",
      "spot_length"],
-    json=["loop_length", "spot_length"],
     defaults={"loop_length": None, "name": "New Network", "owner_id": None, "spot_length": None},
     id_start=2201, prepare=_prepare_network)
 
@@ -572,15 +568,13 @@ _UNIT_FIELDS = [
     "uuid", "weekly_impressions", "weekly_traffic", "last_heard_from_seconds_ago", "last_heard_from_utc",
     "last_played_on_seconds_ago", "last_played_on_utc", "has_audience_data",
 ]
-_UNIT_JSON = ["blacklist_unique_advertiser_ids", "facing_direction", "image_uri",
-              "impression_verifier_vendor_external_id", "location", "media_type", "physical_unit_count"]
 _UNIT_BOOLS = ["active", "allow_audio", "allow_flash", "allow_html", "allow_image", "allow_video", "allow_zip",
                "available_for_adserver", "available_for_deals", "available_for_open_exchange",
                "available_for_storefront", "enable_strict_iab_blacklisting",
                "enable_strict_iab_frequency_capping", "has_audience_data"]
 
 UNITS = _Resource(
-    "Unit", "hs_units", "unit_id", _UNIT_FIELDS, json=_UNIT_JSON, bools=_UNIT_BOOLS,
+    "Unit", "hs_units", "unit_id", _UNIT_FIELDS, bools=_UNIT_BOOLS,
     defaults={"active": True, "allow_audio": False, "allow_flash": False, "allow_html": False,
               "allow_image": True, "allow_video": True, "allow_zip": False, "available_for_adserver": True,
               "available_for_deals": True, "available_for_open_exchange": True,
@@ -604,7 +598,7 @@ _PACK_UNIT_DROP = {"blacklist_unique_advertiser_ids", "last_heard_from_seconds_a
                    "last_played_on_seconds_ago", "last_played_on_utc", "has_audience_data"}
 UNITPACK_UNITS = _Resource(
     "Unit", "hs_units", "unit_id", [f for f in _UNIT_FIELDS if f not in _PACK_UNIT_DROP],
-    json=_UNIT_JSON, bools=_UNIT_BOOLS)
+    bools=_UNIT_BOOLS)
 
 UNITPACKS = _Resource(
     "Unit pack", "hs_unitpacks", "unitpack_id",
@@ -619,7 +613,7 @@ DEMOGRAPHICS = _Resource(
     "Demographic", "hs_demographics", "demographic_id",
     ["code", "created_on_utc", "demographic_id", "modified_on_utc", "name", "organization_id", "show_buyers",
      "type"],
-    json=["organization_id"], bools=["show_buyers"],
+    bools=["show_buyers"],
     defaults={"code": "", "name": "New Demographic", "organization_id": None, "show_buyers": True,
               "type": "custom"},
     id_start=801)
@@ -647,13 +641,13 @@ REPORT_DEFINITIONS = _Resource(
     "Report definition", "hs_report_definitions", "report_definition_id",
     ["definition_json", "exchange_id", "last_executed_on_utc", "name", "organization_id",
      "report_definition_id"],
-    json=["definition_json", "exchange_id"], id_start=5501)
+    id_start=5501)
 
 REPORT_EXECUTIONS = _Resource(
     "Report execution", "hs_report_executions", "report_execution_id",
     ["execution_finished_time_utc", "execution_started_time_utc", "progress", "report_definition_id",
      "report_execution_id", "report_file_url", "status_code", "status_message"],
-    json=["status_message"], order="report_execution_id DESC", id_start=5601)
+    order="report_execution_id DESC", id_start=5601)
 
 PUBLISHERS = _Resource("Media owner", "hs_publishers", "id",
                        ["id", "name", "domain", "seller_type", "created_at"])

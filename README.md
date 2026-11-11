@@ -149,6 +149,18 @@ docker compose -f docker-compose.yml -f docker-compose.local.yml up --build -d
 
 > The `-v` flag deletes the Postgres data volume. All data will be regenerated from scratch.
 
+### Hivestack sample data
+
+With `hivestack.seed: sample` in `config.yml` (the default), Hivestack seeds from the captured live records in `data/hivestack/sample/`. The folder is git-ignored because it holds customer data. Campaigns, line items, creatives and reports are generated around the real IDs. Without the folder, Hivestack seeds synthetic data.
+
+To load the capture into a database that is already seeded, without wiping the other platforms:
+
+```bash
+python -m app.hivestack_import --replace     # Docker: docker compose ... exec api python -m app.hivestack_import --replace
+```
+
+`--replace` deletes all Hivestack v2 records, including any created through POST, and reloads them. The RTB tables (publishers, deals, bid requests, impressions, events) are kept.
+
 ### Port already in use
 
 Something else is using 8000 or 5432. Either stop the other process or change the port mapping in `docker-compose.yml` / `docker-compose.local.yml`:

@@ -57,6 +57,7 @@ Each ad platform gets its own file in `app/routes/`. The router is conditionally
 ### Pagination
 - Basis WODH/DV360/Triton/AdsWizz use cursor-based pagination (`paginate()` in `helpers.py`)
 - Basis UIL uses page-based pagination (page/pageSize) with its own `_paginated_query()` helper
+- Hivestack seeds from captured live records in `data/hivestack/sample/` (git-ignored) when `config.yml` has `hivestack.seed: sample`, otherwise synthetic. Reload with `python -m app.hivestack_import --replace`. See `docs/plans/hivestack-sample-import.md`
 - Hivestack uses offset-based `$top/$skip/$count` pagination (`_list()` in `hivestack.py`). Inventory lists (networks, sites, units, unitpacks, demographics) have no default `$top`
 
 ### Route-level helpers

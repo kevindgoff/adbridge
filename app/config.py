@@ -12,6 +12,19 @@ def load_config() -> dict:
         return {}
 
 
+def get_hivestack_settings() -> dict:
+    """Hivestack seed mode. Env vars HIVESTACK_SEED / HIVESTACK_SAMPLE_DIR override config.yml.
+
+    seed: "sample"    — load captured live records from sample_dir, synthesize the rest
+          "synthetic" — generated data only
+    """
+    hs = load_config().get("hivestack", {}) or {}
+    return {
+        "seed": os.environ.get("HIVESTACK_SEED", hs.get("seed", "synthetic")).lower(),
+        "sample_dir": os.environ.get("HIVESTACK_SAMPLE_DIR", hs.get("sample_dir", "data/hivestack/sample")),
+    }
+
+
 def get_enabled_apis() -> dict:
     config = load_config()
     apis = config.get("apis", {})
