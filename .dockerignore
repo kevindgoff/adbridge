@@ -1,0 +1,18 @@
+# Keep secrets, local databases and captured customer data out of the image
+.env
+.env.*
+*.db
+*.db.*
+data/hivestack/
+
+# Local tooling
+.git/
+.venv/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.kiro/
+.idea/
+.vscode/
+*.log
