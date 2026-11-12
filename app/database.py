@@ -3180,23 +3180,30 @@ def _hs_upsert(cur, table, pk, record, update=True):
 def _load_hivestack_capture(cur, directory):
     """Upsert captured live records from `directory` into the hs_ v2 tables.
 
-    Records are written as captured; column names equal the live field names.
-    Fields with no column are dropped with a warning. Unrecognised files are
-    skipped. Media types and location extras are derived afterwards.
-    Returns {entity: record count}.
+    Client data is sanitized first (app/hivestack_sanitize.py): names, addresses,
+    domains, logos, external IDs and UUIDs are replaced, and numeric IDs and
+    structure are kept. Raw values are never written. Column names equal the
+    live field names. Fields with no column are dropped with a warning, and
+    unrecognised files are skipped. Media types and location extras are
+    derived afterwards. Returns {entity: record count}.
     """
+    from app.hivestack_sanitize import sanitize
+
     directory = Path(directory)
     known = {stem for stem, _, _ in CAPTURE_ENTITIES} | {"sample_summary"}
     for f in sorted(directory.glob("*.json")):
         if f.stem not in known:
             print(f"Hivestack import: skipping {f.name} (no table mapping)")
 
+    captured = {stem: _hs_read_capture(directory / f"{stem}.json")
+                for stem, _, _ in CAPTURE_ENTITIES if (directory / f"{stem}.json").exists()}
+    captured = sanitize(captured)
+
     loaded = {}
     for stem, table, pk in CAPTURE_ENTITIES:
-        path = directory / f"{stem}.json"
-        if not path.exists():
+        if stem not in captured:
             continue
-        records = _hs_read_capture(path)
+        records = captured[stem]
         columns = _hs_table_columns(table)
         dropped = sorted({k for r in records for k in r} - columns)
         if dropped:

@@ -23,7 +23,7 @@ Each file is `{"_meta": {...}, "records": [...]}`. The `records` are the live AP
 I checked every record against the spec models and the table columns. There are no type errors, no unknown fields, and no missing required fields.
 
 Other facts that shape the import:
-- **One organization.** Every record belongs to organization/owner `365` (Stingray). The synthetic seed uses organization `5021` and owners `701`–`705`.
+- **One organization.** Every record belongs to one client organization/owner. The synthetic seed uses organization `5021` and owners `701`–`705`.
 - **References resolve.** Units point at the 10 sites, the 1 network and 7 of the locations. Sites point at the same 7 locations. Locations form a Canada > Ontario/Quebec > city tree.
 - **No ID collisions** with the synthetic seed for these six tables.
 - **Media types are missing.** All units use `mediatype_id` 121 (`retail.mall`, parent 101). The synthetic seed already has a 101 with a different meaning (`outdoor.billboards`), so loading the real data next to the synthetic media types would give a wrong tree.
@@ -57,7 +57,7 @@ hivestack:
   - loads the capture;
   - skips the synthetic rows for the six covered resources and for media types;
   - keeps synthetic languages, demographics and RTB data, which don't conflict;
-  - sets the organization used for new POST records to `365`.
+  - sets the organization used for new POST records to the captured organization.
 
 ### 4. Buy-side data in sample mode
 Generate synthetic campaigns, line items, creatives and line-item creatives, plus a unit pack, that reference the real advertiser, account, unit and owner IDs. Then campaign `$expand`, `/lineitems/{id}/units` and the ad-serving endpoints all return real inventory. The existing `_seed_hivestack_v2` generator would take its parent IDs as parameters instead of hard-coding them.
@@ -77,7 +77,7 @@ python -m app.hivestack_import [--dir data/hivestack/sample] [--replace]
 - I'd run the same test on Postgres once Docker is available.
 
 ## Open questions
-1. **Commit the data?** The files contain Stingray's names, addresses and logo URLs. Options:
+1. **Commit the data?** The files contain the client's names, addresses and logo URLs. Options:
    - (a) commit as-is;
    - (b) add `data/hivestack/` to `.gitignore` and keep the files local;
    - (c) commit a scrubbed copy, with names and addresses replaced and IDs and structure kept.
@@ -98,7 +98,7 @@ python -m app.hivestack_import [--dir data/hivestack/sample] [--replace]
 |---|---|
 | `app/hivestack_model.py` | New. JSON-column lists, the capture-file mapping and the v2 table list. The seed code and the routes both read these, so the lists are defined once. |
 | `app/config.py` | `get_hivestack_settings()`. The `HIVESTACK_SEED` and `HIVESTACK_SAMPLE_DIR` env vars override `config.yml`. |
-| `app/database.py` | `_load_hivestack_capture` (upserts, then derives media types and location extras). The seed is split into `_seed_hivestack_v2_synthetic` (what a capture replaces) and `_seed_hivestack_v2_dependents` (built from whatever units, advertisers and accounts are in the tables). `HS_ORGANIZATION_ID` comes from the capture: 365, or 5021 in synthetic mode. |
+| `app/database.py` | `_load_hivestack_capture` (upserts, then derives media types and location extras). The seed is split into `_seed_hivestack_v2_synthetic` (what a capture replaces) and `_seed_hivestack_v2_dependents` (built from whatever units, advertisers and accounts are in the tables). `HS_ORGANIZATION_ID` comes from the capture, or 5021 in synthetic mode. |
 | `app/hivestack_import.py` | New. `python -m app.hivestack_import [--dir PATH] [--replace]` |
 | `tests/test_hivestack_sample.py` | New. Every captured record round-trips through `GET /hivestack/<entity>/<id>`. Also covers list counts, the media type tree, references from the synthetic buy side, and the organization used for new records. Skipped when the capture is absent. |
 
@@ -106,3 +106,6 @@ Notes:
 - The comparison in the test is on values. JSON key order is not compared.
 - Running the import without `--replace` on a synthetic database leaves both datasets side by side, and the synthetic media type 101 is kept. Use `--replace` to switch.
 - Tested on SQLite only. The upserts use `ON CONFLICT ... DO UPDATE`, which Postgres also supports, but this hasn't been run against Postgres.
+
+## Sanitization
+Captured records are sanitized on import by `app/hivestack_sanitize.py` (rule: `.kiro/steering/data-handling.md`). Names, descriptions, addresses, codes, external IDs, logos, domains and UUIDs are replaced with generic values derived from each record's numeric ID. Coordinates are rounded to 2 decimals. IDs, references and public geography are kept. Entities without a rule are rejected.
