@@ -12,4 +12,4 @@ venv/
 .venv/
 # Captured live Hivestack records (customer data): keep local
 data/hivestack/
-*.stale
+*.stale*.db.*
